@@ -4,8 +4,6 @@
 
 Airloom is an open source browser instrument. It watches your hands through your webcam, lets you draw and stretch glowing strings, and turns fingertip swipes into notes. It also works with a mouse or touch screen. The project was inspired by the air-instrument experiments shared by [Mukund Kapoor](https://x.com/mukudotgpt/status/2124792791264108827) and [DataChaz](https://x.com/DataChaz/status/2124838538244202687); its implementation and graphics are original.
 
-The landing page draws on the visual rhythm of [ChatGPT's Dots page](https://chatgpt.com/features/dots/). See the [design audit](DESIGN_AUDIT.md) for the specific patterns studied and how they were adapted.
-
 ## Try it
 
 1. Open the [live site](https://ayshahawy-cmd.github.io/air-instrument-/) in a modern browser.
