@@ -1,4 +1,5 @@
 import './style.css';
+import './editorial.css';
 import { SoundEngine, voices, type Voice } from './audio';
 import { clamp, crossing, distance, type AirString, type Point } from './geometry';
 import { Vision, type Hand } from './vision';
@@ -16,9 +17,10 @@ app.innerHTML = `
         <div class="eyebrow"><span class="eyebrow-line"></span> AN EXPERIMENT IN PLAY</div>
         <h1>Make music out<br />of <em>thin air.</em></h1>
         <p class="hero-copy">Reach into the screen. Draw a string. Stretch it into a note. Then let your fingers do the playing.</p>
+        <a class="hero-cta" href="#play">Step into the playground <span aria-hidden="true">↗</span></a>
         <div class="hero-tags"><span>01 / CAMERA</span><span>02 / HANDS</span><span>03 / SOUND</span></div>
       </section>
-      <section class="instrument" aria-label="Interactive instrument">
+      <section class="instrument" id="play" aria-label="Interactive instrument">
         <div class="instrument-top"><div class="instrument-title"><span class="tiny-orbit">✺</span> THE PLAYGROUND <span class="instrument-version">/ v1.0</span></div><div class="signal"><span id="signal-dot"></span><span id="signal-label">STANDBY</span></div></div>
         <div class="stage" id="stage">
           <div class="stage-grid"></div><div class="stage-vignette"></div>
@@ -158,6 +160,7 @@ stage.addEventListener('pointerdown', event => {
 stage.addEventListener('pointermove', event => {
   if (mode !== 'mouse') return;
   const p = pointerPoint(event);
+  stage.style.cursor = mouseGesture ? 'grabbing' : nearestEndpoint(p) ? 'grab' : 'crosshair';
   if (mouseGesture?.kind === 'end' && mouseGesture.string && mouseGesture.end) mouseGesture.string[mouseGesture.end] = p;
   else if (mouseGesture?.kind === 'draw' && draft) draft.b = p;
   else if (previousMouse) pluck(previousMouse, p, performance.now());
@@ -218,12 +221,13 @@ function updateHands(now: number) {
 
 function setMode(next: 'mouse' | 'camera') {
   mode = next;
+  stage.style.cursor = next === 'mouse' ? 'crosshair' : 'default';
   stage.classList.toggle('camera-mode', next === 'camera');
   get<HTMLDivElement>('intro').hidden = true;
   get<HTMLDivElement>('controls').hidden = false;
   get<HTMLSpanElement>('signal-label').textContent = next === 'camera' ? 'CAMERA LIVE' : 'MOUSE MODE';
   get<HTMLSpanElement>('mode-status').textContent = next === 'camera' ? 'Show your hands · pinch to draw, swipe to play' : 'Drag to draw · move across a string to play';
-  get<HTMLDivElement>('stage-help').textContent = next === 'camera' ? 'PINCH + DRAG TO DRAW  /  SWIPE TO PLAY' : 'DRAG TO DRAW  /  HOVER OVER AN END TO TUNE';
+  get<HTMLDivElement>('stage-help').textContent = next === 'camera' ? 'PINCH + DRAG TO DRAW  /  SWIPE TO PLAY' : 'DRAG TO DRAW  /  DRAG AN END TO TUNE';
   get<HTMLButtonElement>('switch-camera').classList.toggle('active', next === 'camera');
   get<HTMLButtonElement>('switch-mouse').classList.toggle('active', next === 'mouse');
   if (!strings.length) resetStrings();
