@@ -5,7 +5,6 @@ import { clamp, crossing, distance, type AirString, type Point } from './geometr
 import { Vision, type Hand } from './vision';
 import { PinchIntent } from './pinch';
 
-const gestureDraw = new URL('./assets/gesture-draw.jpg', import.meta.url).href;
 const gestureIntro = new URL('./assets/gesture-intro.jpg', import.meta.url).href;
 const gestureShape = new URL('./assets/gesture-shape.jpg', import.meta.url).href;
 const gesturePlay = new URL('./assets/gesture-play.jpg', import.meta.url).href;
@@ -35,7 +34,7 @@ app.innerHTML = `
             <div class="intro-symbol"><img src="${gestureIntro}" alt="" /></div>
             <div class="intro-kicker">YOUR AIR. YOUR INSTRUMENT.</div>
             <h2>Ready to play?</h2>
-            <p>Pinch with both hands and pull apart to draw a string.<br class="desktop-break" /> Or explore with your mouse.</p>
+            <p>Pinch thumb and index finger, move your hand, then release.<br class="desktop-break" /> Or explore with your mouse.</p>
             <div class="intro-actions"><button id="start-camera" class="button button-primary">✺ &nbsp; Start camera</button><button id="start-mouse" class="button button-secondary">Try with mouse <span>→</span></button></div>
             <small>Camera stays on your device. No account needed.</small>
           </div>
@@ -46,6 +45,7 @@ app.innerHTML = `
           <div class="controls" id="controls" hidden>
             <button id="switch-camera" class="control-button" title="Use camera">CAMERA</button>
             <button id="switch-mouse" class="control-button" title="Use mouse">MOUSE</button>
+            <button id="undo" class="control-button" title="Remove the last string">UNDO</button>
             <button id="clear" class="control-button" title="Clear all strings">CLEAR</button>
             <button id="save-favorite" class="control-button" title="Save your favorite strings and sounds">SAVE FAVORITE</button>
             <button id="sound" class="control-button" title="Mute or unmute sound">SOUND ON</button>
@@ -53,10 +53,11 @@ app.innerHTML = `
           <span class="note-count"><span id="note-count">00</span> NOTES PLAYED</span>
         </div>
       </section>
+      <section class="strings-panel" id="strings-panel" hidden><div class="strings-heading"><strong>YOUR STRINGS</strong><span>Move an end to shorten it, or delete one below.</span></div><div class="strings-list" id="strings-list"></div></section>
       <section class="soundbar" aria-label="Choose a sound"><div class="soundbar-label">SOUND FOR NEW STRINGS <span>↘</span></div><div class="sound-options" id="sound-options"></div></section>
       <section class="favorites" id="favorites" hidden><div class="favorites-heading"><strong>YOUR FAVORITES</strong><span>Saved in this browser</span></div><div class="favorites-list" id="favorites-list"></div></section>
       <section class="how" id="how"><h2>Get going with Airloom</h2><p class="how-lead">A little movement is all it takes. Make a string, shape its sound, and see where the music goes.</p><div class="how-grid">
-        <article><div class="step-copy"><div class="step-num">01 / MAKE</div><h3>Draw a string.</h3><p>Pinch with both hands, pull them apart, then release. With a mouse, click and drag.</p></div><div class="step-art art-draw"><img src="${gestureDraw}" alt="Two hands pulling a glowing turquoise string taut" loading="lazy" /></div></article>
+        <article><div class="step-copy"><div class="step-num">01 / MAKE</div><h3>Draw a string.</h3><p>Pinch your thumb and index finger, move your hand, then release. With a mouse, click and drag.</p></div><div class="step-art art-draw"><img src="${gestureIntro}" alt="A hand pinching a glowing turquoise string" loading="lazy" /></div></article>
         <article><div class="step-copy"><div class="step-num">02 / SHAPE</div><h3>Give it a note.</h3><p>Pinch or drag either end to tune the string. Shorter strings make brighter, higher notes.</p></div><div class="step-art art-shape"><img src="${gestureShape}" alt="A hand moving a glowing lavender string endpoint" loading="lazy" /></div></article>
         <article><div class="step-copy"><div class="step-num">03 / PLAY</div><h3>Let it sing.</h3><p>Swipe an index finger across a string to pluck it. Faster gestures make louder notes.</p></div><div class="step-art art-play"><img src="${gesturePlay}" alt="An index finger plucking a glowing string" loading="lazy" /></div></article>
       </div></section>
@@ -75,8 +76,9 @@ const strings: AirString[] = [];
 const lastPluck = new Map<number, number>();
 const previousTips = new Map<string, Point>();
 const pinchIntents = new Map<string, PinchIntent>();
+const handLastSeen = new Map<string, number>();
 const endpointGestures = new Map<string, { string: AirString; end: 'a' | 'b' }>();
-let stretch: { ids: [string, string]; initialLength: number; a: Point; b: Point } | null = null;
+let cameraDraft: { handId: string; a: Point; b: Point } | null = null;
 let draft: { a: Point; b: Point } | null = null;
 let mouseGesture: { kind: 'draw' | 'end'; start?: Point; string?: AirString; end?: 'a' | 'b' } | null = null;
 let previousMouse: Point | null = null;
@@ -113,10 +115,11 @@ function toast(message: string) {
 }
 
 function addString(a: Point, b: Point) {
-  if (distance(a, b) < 0.16) return;
+  if (distance(a, b) < 0.075) { toast('Move a little farther before releasing to make a string'); return; }
   const stringVoice = selectedVoice === 'mix' ? voices[(nextId - 1) % voices.length].id : selectedVoice;
   strings.push({ id: nextId++, a: { ...a }, b: { ...b }, voice: stringVoice, hue: voices.find(v => v.id === stringVoice)!.hue, pulse: 0, created: performance.now() });
   if (strings.length > 5) strings.shift();
+  renderStrings();
   toast(`${voices.find(v => v.id === stringVoice)!.name} string created — swipe to play`);
 }
 
@@ -127,12 +130,14 @@ function clearStrings() {
   noteCount = 0;
   get<HTMLSpanElement>('note-count').textContent = '00';
   clearCameraGestures();
+  renderStrings();
 }
 
 function clearCameraGestures() {
-  stretch = null;
+  cameraDraft = null;
   endpointGestures.clear();
   pinchIntents.clear();
+  handLastSeen.clear();
   previousTips.clear();
 }
 
@@ -140,7 +145,7 @@ function nearestEndpoint(p: Point) {
   let found: { string: AirString; end: 'a' | 'b'; distance: number } | null = null;
   for (const string of strings) for (const end of ['a', 'b'] as const) {
     const d = distance(p, string[end]);
-    if (d < 0.052 && (!found || d < found.distance)) found = { string, end, distance: d };
+    if (d < 0.065 && (!found || d < found.distance)) found = { string, end, distance: d };
   }
   return found;
 }
@@ -187,11 +192,12 @@ stage.addEventListener('pointermove', event => {
 function endMouse(event: PointerEvent) {
   if (mode !== 'mouse' || !mouseGesture) return;
   if (mouseGesture.kind === 'draw' && mouseGesture.start) addString(mouseGesture.start, pointerPoint(event));
+  if (mouseGesture.kind === 'end') renderStrings();
   mouseGesture = null;
   draft = null;
 }
 stage.addEventListener('pointerup', endMouse);
-stage.addEventListener('pointercancel', endMouse);
+stage.addEventListener('pointercancel', () => { mouseGesture = null; draft = null; });
 stage.addEventListener('pointerleave', () => { previousMouse = null; });
 
 function videoPoint(p: Point): Point {
@@ -207,15 +213,18 @@ function withinStage(p: Point) {
   return p.x >= 0.04 && p.x <= 0.96 && p.y >= 0.04 && p.y <= 0.96;
 }
 
+function smoothPoint(from: Point, to: Point): Point {
+  return { x: from.x * 0.35 + to.x * 0.65, y: from.y * 0.35 + to.y * 0.65 };
+}
+
 function updateHands(now: number) {
   const detected = vision.detect(now);
   if (!detected) return;
   hands = detected.map(hand => ({ ...hand, points: hand.points.map(videoPoint), tip: videoPoint(hand.tip), pinch: videoPoint(hand.pinch) }));
   const seen = new Set<string>();
-  const released = new Set<string>();
-  const moved = new Set<string>();
   for (const hand of hands) {
     seen.add(hand.id);
+    handLastSeen.set(hand.id, now);
     let intent = pinchIntents.get(hand.id);
     if (!intent) {
       intent = new PinchIntent();
@@ -223,19 +232,28 @@ function updateHands(now: number) {
     }
     const change = intent.update(hand.pinchRatio, hand.pinch, now);
     hand.pinching = intent.active;
-    if (change.canceled) endpointGestures.delete(hand.id);
+    if (change.canceled) {
+      endpointGestures.delete(hand.id);
+      if (cameraDraft?.handId === hand.id) cameraDraft = null;
+    }
     if (change.started) {
-      moved.add(hand.id);
       const endpoint = nearestEndpoint(change.started);
       if (endpoint) endpointGestures.set(hand.id, { string: endpoint.string, end: endpoint.end });
+      else if (!cameraDraft && withinStage(change.started))
+        cameraDraft = { handId: hand.id, a: { ...change.started }, b: { ...change.started } };
     }
     if (change.moved) {
-      moved.add(hand.id);
       const endpoint = endpointGestures.get(hand.id);
-      if (endpoint && withinStage(change.moved)) endpoint.string[endpoint.end] = { ...change.moved };
+      if (endpoint && withinStage(change.moved)) endpoint.string[endpoint.end] = smoothPoint(endpoint.string[endpoint.end], change.moved);
+      else if (cameraDraft?.handId === hand.id && withinStage(change.moved)) cameraDraft.b = smoothPoint(cameraDraft.b, change.moved);
     }
     if (change.released) {
-      released.add(hand.id);
+      if (cameraDraft?.handId === hand.id) {
+        const { a, b } = cameraDraft;
+        cameraDraft = null;
+        addString(a, b);
+      }
+      if (endpointGestures.has(hand.id)) renderStrings();
       endpointGestures.delete(hand.id);
     }
     if (!hand.pinching && !change.released && !change.canceled) {
@@ -245,38 +263,17 @@ function updateHands(now: number) {
     } else previousTips.delete(hand.id);
   }
   for (const id of pinchIntents.keys()) if (!seen.has(id)) {
-    pinchIntents.delete(id);
-    endpointGestures.delete(id);
     previousTips.delete(id);
+    if (now - (handLastSeen.get(id) ?? 0) < 180) continue;
+    pinchIntents.delete(id);
+    handLastSeen.delete(id);
+    endpointGestures.delete(id);
+    if (cameraDraft?.handId === id) cameraDraft = null;
   }
-  const byId = new Map(hands.map(hand => [hand.id, hand]));
-  if (stretch) {
-    const a = byId.get(stretch.ids[0]);
-    const b = byId.get(stretch.ids[1]);
-    if (!a || !b) stretch = null;
-    else {
-      if (moved.has(a.id)) stretch.a = { ...a.pinch };
-      if (moved.has(b.id)) stretch.b = { ...b.pinch };
-      if (released.has(a.id) || released.has(b.id)) {
-        if (withinStage(stretch.a) && withinStage(stretch.b) &&
-            distance(stretch.a, stretch.b) >= Math.max(0.22, stretch.initialLength + 0.14)) {
-          addString(stretch.a, stretch.b);
-        }
-        stretch = null;
-      } else if (!a.pinching || !b.pinching) stretch = null;
-    }
-  }
-  if (!stretch) {
-    const free = hands.filter(hand => hand.pinching && !endpointGestures.has(hand.id) && withinStage(hand.pinch));
-    if (free.length === 2) {
-      const initialLength = distance(free[0].pinch, free[1].pinch);
-      if (initialLength >= 0.04 && initialLength <= 0.55)
-        stretch = { ids: [free[0].id, free[1].id], initialLength, a: { ...free[0].pinch }, b: { ...free[1].pinch } };
-    }
-  }
-  get<HTMLSpanElement>('mode-status').textContent = hands.length < 2
-    ? `${hands.length} hand${hands.length === 1 ? '' : 's'} detected · show both hands to draw`
-    : 'Pinch with both hands · pull apart · release to draw';
+  get<HTMLSpanElement>('mode-status').textContent = cameraDraft
+    ? 'Drawing · move your pinched hand, then release'
+    : endpointGestures.size ? 'Shaping · move the endpoint to shorten or stretch'
+    : hands.length ? 'Hand detected · pinch, move, and release to draw' : 'Show one hand · open, then pinch to draw';
 }
 
 function setMode(next: 'mouse' | 'camera') {
@@ -286,8 +283,8 @@ function setMode(next: 'mouse' | 'camera') {
   get<HTMLDivElement>('intro').hidden = true;
   get<HTMLDivElement>('controls').hidden = false;
   get<HTMLSpanElement>('signal-label').textContent = next === 'camera' ? 'CAMERA LIVE' : 'MOUSE MODE';
-  get<HTMLSpanElement>('mode-status').textContent = next === 'camera' ? 'Show both hands · pinch and pull apart to draw' : 'Drag to draw · move across a string to play';
-  get<HTMLDivElement>('stage-help').textContent = next === 'camera' ? 'TWO HANDS: PINCH + PULL APART + RELEASE  /  SWIPE TO PLAY' : 'DRAG TO DRAW  /  DRAG AN END TO TUNE';
+  get<HTMLSpanElement>('mode-status').textContent = next === 'camera' ? 'Show one hand · open, then pinch to draw' : 'Drag to draw · move across a string to play';
+  get<HTMLDivElement>('stage-help').textContent = next === 'camera' ? 'PINCH + MOVE + RELEASE TO DRAW  /  PINCH AN END TO SHORTEN' : 'DRAG TO DRAW  /  DRAG AN END TO TUNE';
   get<HTMLButtonElement>('switch-camera').classList.toggle('active', next === 'camera');
   get<HTMLButtonElement>('switch-mouse').classList.toggle('active', next === 'mouse');
 }
@@ -307,7 +304,7 @@ async function startCamera() {
     hands = [];
     clearCameraGestures();
     setMode('camera');
-    toast('Camera ready — pinch with both hands, pull apart, then release');
+    toast('Camera ready — open one hand, pinch, move, then release');
   } catch (error) {
     if (request !== cameraRequest) return;
     const message = error instanceof Error ? error.message : 'Camera could not start.';
@@ -323,6 +320,14 @@ get<HTMLButtonElement>('start-camera').addEventListener('click', startCamera);
 get<HTMLButtonElement>('start-mouse').addEventListener('click', async () => { ++cameraRequest; await sound.ready(); setMode('mouse'); toast('Drag to draw your first string'); });
 get<HTMLButtonElement>('switch-camera').addEventListener('click', startCamera);
 get<HTMLButtonElement>('switch-mouse').addEventListener('click', () => { ++cameraRequest; vision.stop(); hands = []; clearCameraGestures(); setMode('mouse'); });
+get<HTMLButtonElement>('undo').addEventListener('click', () => {
+  const removed = strings.pop();
+  if (!removed) { toast('No strings to undo'); return; }
+  lastPluck.delete(removed.id);
+  for (const [handId, gesture] of endpointGestures) if (gesture.string.id === removed.id) endpointGestures.delete(handId);
+  renderStrings();
+  toast('Last string removed');
+});
 get<HTMLButtonElement>('clear').addEventListener('click', () => { clearStrings(); toast('Canvas cleared — draw your own strings'); });
 get<HTMLButtonElement>('sound').addEventListener('click', event => { sound.muted = !sound.muted; (event.currentTarget as HTMLButtonElement).textContent = sound.muted ? 'SOUND OFF' : 'SOUND ON'; });
 
@@ -344,6 +349,36 @@ function selectSound(next: Voice | 'mix') {
   selectedVoice = next;
   for (const [id, button] of soundButtons) button.classList.toggle('selected', id === next);
 }
+
+function renderStrings() {
+  const section = get<HTMLElement>('strings-panel');
+  const list = get<HTMLDivElement>('strings-list');
+  section.hidden = strings.length === 0;
+  list.replaceChildren();
+  strings.forEach((string, index) => {
+    const row = document.createElement('div');
+    row.className = 'string-row';
+    const name = document.createElement('span');
+    name.className = 'string-name';
+    name.innerHTML = `<i style="--hue:${string.hue}"></i> String ${index + 1} · ${voices.find(item => item.id === string.voice)?.name ?? 'Sound'}`;
+    const remove = document.createElement('button');
+    remove.className = 'string-remove';
+    remove.textContent = 'Delete';
+    remove.setAttribute('aria-label', `Delete string ${index + 1}`);
+    remove.addEventListener('click', () => {
+      const position = strings.findIndex(item => item.id === string.id);
+      if (position < 0) return;
+      strings.splice(position, 1);
+      lastPluck.delete(string.id);
+      for (const [handId, gesture] of endpointGestures) if (gesture.string.id === string.id) endpointGestures.delete(handId);
+      renderStrings();
+      toast('String deleted');
+    });
+    row.append(name, remove);
+    list.append(row);
+  });
+}
+renderStrings();
 
 type SavedString = Pick<AirString, 'a' | 'b' | 'voice'>;
 type Favorite = { id: string; savedAt: number; selectedVoice: Voice | 'mix'; strings: SavedString[] };
@@ -394,6 +429,7 @@ function renderFavorites() {
         const item = voices.find(v => v.id === saved.voice)!;
         strings.push({ id: nextId++, a: { ...saved.a }, b: { ...saved.b }, voice: saved.voice, hue: item.hue, pulse: 0, created: performance.now() });
       }
+      renderStrings();
       selectSound(favorite.selectedVoice);
       toast('Favorite loaded');
       stage.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -478,7 +514,7 @@ function drawHands(now: number) {
     }
     const p = hand.pinching ? hand.pinch : hand.tip;
     ctx.beginPath(); ctx.arc(p.x * width, p.y * height, hand.pinching ? 18 + Math.sin(now * .012) * 2 : 11, 0, Math.PI * 2);
-    ctx.strokeStyle = hand.pinching ? '#d5ff8a' : '#a9fff0'; ctx.lineWidth = 2; ctx.shadowBlur = 20; ctx.shadowColor = ctx.strokeStyle; ctx.stroke();
+    ctx.strokeStyle = hand.pinching ? '#f5f9f4' : '#a9fff0'; ctx.lineWidth = 2; ctx.shadowBlur = 20; ctx.shadowColor = ctx.strokeStyle; ctx.stroke();
     ctx.restore();
   }
 }
@@ -495,8 +531,8 @@ function frame(now: number) {
     for (const string of strings) drawString(string, now);
     const previewVoice = selectedVoice === 'mix' ? voices[(nextId - 1) % voices.length] : voices.find(v => v.id === selectedVoice)!;
     if (draft && distance(draft.a, draft.b) > 0.04) drawString({ ...draft, hue: previewVoice.hue, pulse: 0 }, now, true);
-    if (stretch && distance(stretch.a, stretch.b) > stretch.initialLength + 0.05)
-      drawString({ a: stretch.a, b: stretch.b, hue: previewVoice.hue, pulse: 0 }, now, true);
+    if (cameraDraft && distance(cameraDraft.a, cameraDraft.b) > 0.025)
+      drawString({ a: cameraDraft.a, b: cameraDraft.b, hue: previewVoice.hue, pulse: 0 }, now, true);
     if (mode === 'camera') drawHands(now);
   }
   requestAnimationFrame(frame);

@@ -7,8 +7,8 @@ export type PinchChange = {
   canceled?: boolean;
 };
 
-// A hand must first be visibly open, then hold a clear pinch. Tracking loss and
-// large landmark jumps cancel the gesture instead of turning them into strings.
+// A hand must first be visibly open, then briefly hold a pinch. Tracking loss
+// and large landmark jumps cancel the gesture instead of creating a string.
 export class PinchIntent {
   private openSince: number | null = null;
   private closeSince: number | null = null;
@@ -20,16 +20,16 @@ export class PinchIntent {
 
   update(ratio: number, point: Point, now: number): PinchChange {
     let canceled = false;
-    if (this.lastSeen !== null && now - this.lastSeen > 250) {
+    if (this.lastSeen !== null && now - this.lastSeen > 300) {
       canceled = this.active;
       this.reset();
     }
     this.lastSeen = now;
 
     if (this.active) {
-      if (ratio >= 0.5) {
+      if (ratio >= 0.62) {
         this.releaseSince ??= now;
-        if (now - this.releaseSince >= 110) {
+        if (now - this.releaseSince >= 75) {
           const released = this.lastPoint ?? point;
           this.reset();
           this.openSince = now;
@@ -38,7 +38,7 @@ export class PinchIntent {
         }
         return {};
       }
-      if (this.lastPoint && distance(point, this.lastPoint) > 0.18) {
+      if (this.lastPoint && distance(point, this.lastPoint) > 0.24) {
         this.reset();
         return { canceled: true };
       }
@@ -47,13 +47,13 @@ export class PinchIntent {
       return { moved: point };
     }
 
-    if (ratio >= 0.5) {
+    if (ratio >= 0.62) {
       this.openSince ??= now;
-      if (now - this.openSince >= 130) this.ready = true;
+      if (now - this.openSince >= 80) this.ready = true;
       this.closeSince = null;
-    } else if (ratio <= 0.3 && this.ready) {
+    } else if (ratio <= 0.42 && this.ready) {
       this.closeSince ??= now;
-      if (now - this.closeSince >= 170) {
+      if (now - this.closeSince >= 80) {
         this.active = true;
         this.ready = false;
         this.closeSince = null;

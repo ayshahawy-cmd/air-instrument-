@@ -35,6 +35,17 @@ test('a held pinch starts only after open hand and releases at its last stable p
   assert.equal(intent.active, false);
 });
 
+test('a short deliberate pinch starts and releases promptly', () => {
+  const intent = new PinchIntent();
+  intent.update(0.75, point(0.2), 0);
+  intent.update(0.75, point(0.2), 90);
+  assert.equal(intent.update(0.2, point(0.2), 110).started, undefined);
+  assert.deepEqual(intent.update(0.2, point(0.2), 195).started, point(0.2));
+  assert.deepEqual(intent.update(0.2, point(0.3), 230).moved, point(0.3));
+  assert.equal(intent.update(0.7, point(0.35), 260).released, undefined);
+  assert.deepEqual(intent.update(0.7, point(0.35), 340).released, point(0.3));
+});
+
 test('tracking jumps cancel a gesture and cannot create a string', () => {
   const intent = new PinchIntent();
   intent.update(0.7, point(0.2), 0);
