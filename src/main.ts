@@ -78,6 +78,7 @@ let nextId = 1;
 let noteCount = 0;
 let lastToastTimeout = 0;
 let hands: Hand[] = [];
+let cameraRequest = 0;
 
 const handConnections = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
 
@@ -229,28 +230,34 @@ function setMode(next: 'mouse' | 'camera') {
 }
 
 async function startCamera() {
+  const request = ++cameraRequest;
   const button = get<HTMLButtonElement>('start-camera');
+  const switchButton = get<HTMLButtonElement>('switch-camera');
   button.disabled = true;
+  switchButton.disabled = true;
   button.textContent = 'Loading camera…';
   try {
     await sound.ready();
     await vision.start();
+    if (request !== cameraRequest) { vision.stop(); return; }
     if (!vision.video.parentElement) stage.prepend(vision.video);
     setMode('camera');
     toast('Camera ready — try pinching your fingers together');
   } catch (error) {
+    if (request !== cameraRequest) return;
     const message = error instanceof Error ? error.message : 'Camera could not start.';
     toast(message.includes('Permission') || message.includes('NotAllowed') ? 'Camera access was denied. You can still play with your mouse.' : `${message} Try mouse mode.`);
   } finally {
     button.disabled = false;
+    switchButton.disabled = false;
     button.innerHTML = '✺ &nbsp; Start camera';
   }
 }
 
 get<HTMLButtonElement>('start-camera').addEventListener('click', startCamera);
-get<HTMLButtonElement>('start-mouse').addEventListener('click', async () => { await sound.ready(); setMode('mouse'); toast('Move across a string to hear it sing'); });
+get<HTMLButtonElement>('start-mouse').addEventListener('click', async () => { ++cameraRequest; await sound.ready(); setMode('mouse'); toast('Move across a string to hear it sing'); });
 get<HTMLButtonElement>('switch-camera').addEventListener('click', startCamera);
-get<HTMLButtonElement>('switch-mouse').addEventListener('click', () => { vision.stop(); hands = []; handGestures.clear(); setMode('mouse'); });
+get<HTMLButtonElement>('switch-mouse').addEventListener('click', () => { ++cameraRequest; vision.stop(); hands = []; handGestures.clear(); setMode('mouse'); });
 get<HTMLButtonElement>('clear').addEventListener('click', () => { strings.length = 0; draft = null; resetStrings(); toast('Starter strings restored'); });
 get<HTMLButtonElement>('sound').addEventListener('click', event => { sound.muted = !sound.muted; (event.currentTarget as HTMLButtonElement).textContent = sound.muted ? 'SOUND OFF' : 'SOUND ON'; });
 
@@ -344,4 +351,4 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-window.addEventListener('pagehide', () => vision.stop());
+window.addEventListener('pagehide', () => { ++cameraRequest; vision.stop(); });
