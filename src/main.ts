@@ -1,5 +1,5 @@
 import './style.css';
-import './editorial.css';
+import './dots.css';
 import { SoundEngine, voices, type Voice } from './audio';
 import { clamp, crossing, distance, type AirString, type Point } from './geometry';
 import { Vision, type Hand } from './vision';
@@ -8,17 +8,15 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
   <div class="site-shell">
     <header class="topbar">
-      <a class="brand" href="#top" aria-label="Airloom home"><span class="brand-mark">✳</span><span>airloom<span class="brand-dot">.</span></span></a>
-      <nav class="topnav" aria-label="Main navigation"><a href="#how">How it works</a><a href="#about">Behind the sound</a><a id="github-link" href="https://github.com/ayshahawy-cmd/air-instrument-" target="_blank" rel="noreferrer">GitHub <span aria-hidden="true">↗</span></a></nav>
-      <span class="top-label"><span class="live-dot"></span> A tiny instrument for your hands</span>
+      <a class="brand" href="#top" aria-label="Airloom home">airloom<span class="brand-dot">.</span></a>
+      <nav class="topnav" aria-label="Main navigation"><a href="#play">Play</a><a href="#how">How it works</a><a href="#about">About</a><a id="github-link" href="https://github.com/ayshahawy-cmd/air-instrument-" target="_blank" rel="noreferrer">GitHub ↗</a></nav>
     </header>
     <main id="top">
       <section class="hero">
-        <div class="eyebrow"><span class="eyebrow-line"></span> AN EXPERIMENT IN PLAY</div>
-        <h1>Make music out<br />of <em>thin air.</em></h1>
-        <p class="hero-copy">Reach into the screen. Draw a string. Stretch it into a note. Then let your fingers do the playing.</p>
-        <a class="hero-cta" href="#play">Step into the playground <span aria-hidden="true">↗</span></a>
-        <div class="hero-tags"><span>01 / CAMERA</span><span>02 / HANDS</span><span>03 / SOUND</span></div>
+        <div class="hero-object" aria-hidden="true"><svg viewBox="0 0 160 160" fill="none"><defs><linearGradient id="ribbon" x1="20" y1="20" x2="140" y2="140"><stop stop-color="#fff"/><stop offset="1" stop-color="#a9e3dc"/></linearGradient></defs><circle cx="80" cy="80" r="64" fill="#fff" opacity=".045"/><path d="M26 49c35-22 72 21 108-2M20 80c38-27 81 28 120-2M27 111c36-22 73 20 107-2" stroke="url(#ribbon)" stroke-width="5" stroke-linecap="round"/><circle cx="26" cy="49" r="5" fill="#fff"/><circle cx="140" cy="78" r="5" fill="#fff"/><circle cx="134" cy="109" r="5" fill="#fff"/></svg></div>
+        <h1>Introducing Airloom</h1>
+        <p class="hero-copy">An instrument you draw in the air<br class="desktop-break" /> and play with your hands.</p>
+        <div class="hero-actions"><a class="hero-cta" href="#play">Start playing</a><a class="hero-secondary" href="https://github.com/ayshahawy-cmd/air-instrument-" target="_blank" rel="noreferrer">Explore the code</a></div>
       </section>
       <section class="instrument" id="play" aria-label="Interactive instrument">
         <div class="instrument-top"><div class="instrument-title"><span class="tiny-orbit">✺</span> THE PLAYGROUND <span class="instrument-version">/ v1.0</span></div><div class="signal"><span id="signal-dot"></span><span id="signal-label">STANDBY</span></div></div>
@@ -49,14 +47,14 @@ app.innerHTML = `
         </div>
       </section>
       <section class="soundbar" aria-label="Choose a sound"><div class="soundbar-label">PICK A SOUND <span>↘</span></div><div class="sound-options" id="sound-options"></div></section>
-      <section class="how" id="how"><div class="section-label">THE MAGIC IS IN THE GESTURE <span>———</span></div><div class="how-grid">
-        <article><div class="step-num">01 <span>✳</span></div><h3>Draw it.</h3><p>Pinch your fingers together and move your hand to pull a glowing string through the air. With a mouse, click and drag.</p></article>
-        <article><div class="step-num">02 <span>↗</span></div><h3>Shape it.</h3><p>Pinch or drag either end to tune the string. Shorter strings make brighter, higher notes.</p></article>
-        <article><div class="step-num">03 <span>〰</span></div><h3>Play it.</h3><p>Swipe your index finger across a string to pluck it. The speed of your gesture changes how strongly it sings.</p></article>
+      <section class="how" id="how"><h2>Get going with Airloom</h2><p class="how-lead">A little movement is all it takes. Make a string, shape its sound, and see where the music goes.</p><div class="how-grid">
+        <article><div class="step-copy"><div class="step-num">01 / MAKE</div><h3>Draw a string.</h3><p>Pinch your fingers together and move your hand to pull a string through the air. With a mouse, click and drag.</p></div><div class="step-art art-draw" aria-hidden="true"><div class="art-line"></div><span class="art-point left"></span><span class="art-point right"></span></div></article>
+        <article><div class="step-copy"><div class="step-num">02 / SHAPE</div><h3>Give it a note.</h3><p>Pinch or drag either end to tune the string. Shorter strings make brighter, higher notes.</p></div><div class="step-art art-shape" aria-hidden="true"><div class="art-line"></div><span class="art-point left"></span><span class="art-point right"></span><span class="art-orbit"></span></div></article>
+        <article><div class="step-copy"><div class="step-num">03 / PLAY</div><h3>Let it sing.</h3><p>Swipe an index finger across a string to pluck it. Faster gestures make louder notes.</p></div><div class="step-art art-play" aria-hidden="true"><div class="art-line"></div><span class="art-point left"></span><span class="art-point right"></span><div class="art-wave">∿∿∿</div></div></article>
       </div></section>
-      <section class="about" id="about"><div class="about-orb">✺</div><div><div class="section-label">BUILT FOR CURIOSITY</div><h2>A little bit of code.<br /><em>A whole lot of wonder.</em></h2><p>Airloom uses on-device hand tracking and browser audio to turn everyday movements into a playful instrument. Your camera frames are processed in your browser; they are never sent to our server.</p><a href="https://github.com/ayshahawy-cmd/air-instrument-" target="_blank" rel="noreferrer">Explore the open source project <span>↗</span></a></div></section>
+      <section class="about" id="about"><div class="about-orb">✳</div><div><h2>Made to be played.<br />Made to be shared.</h2><p>Airloom uses on-device hand tracking and browser audio to turn everyday movements into a playful instrument. Camera frames stay in your browser. The code is open for anyone to explore and remix.</p><a href="https://github.com/ayshahawy-cmd/air-instrument-" target="_blank" rel="noreferrer">Explore on GitHub ↗</a></div></section>
     </main>
-    <footer><span>✳ airloom.</span><span>MADE TO BE PLAYED, SHARED & REMIXED</span><a href="#top">BACK TO TOP ↑</a></footer>
+    <footer><span>airloom.</span><span>Make music out of thin air.</span><a href="#top">Back to top ↑</a></footer>
   </div>`;
 
 const get = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
