@@ -1,4 +1,4 @@
-import { clamp } from './geometry';
+import { clamp } from './geometry.ts';
 
 export type Voice = 'silk' | 'glass' | 'bass' | 'starlight';
 export const voices: { id: Voice; name: string; description: string; hue: number }[] = [
@@ -9,6 +9,9 @@ export const voices: { id: Voice; name: string; description: string; hue: number
 ];
 
 const scale = [0, 2, 4, 7, 9, 12, 14, 16, 19];
+
+export const noteIndexForLength = (length: number) =>
+  clamp(Math.round((0.82 - length) / 0.7 * (scale.length - 1)), 0, scale.length - 1);
 
 export class SoundEngine {
   private context?: AudioContext;
@@ -32,7 +35,7 @@ export class SoundEngine {
   play(length: number, position: number, speed: number, voice: Voice, pan: number) {
     if (!this.context || !this.master || this.muted) return;
     // Longer strings play lower notes; snap to a pentatonic scale for easy harmony.
-    const index = clamp(Math.round(8 - length * 8), 0, 8);
+    const index = noteIndexForLength(length);
     const midi = (voice === 'bass' ? 36 : 48) + scale[index];
     const frequency = 440 * 2 ** ((midi - 69) / 12);
     const key = `${voice}:${midi}`;

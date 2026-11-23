@@ -3,6 +3,12 @@ import './site.css';
 import { SoundEngine, voices, type Voice } from './audio';
 import { clamp, crossing, distance, type AirString, type Point } from './geometry';
 import { Vision, type Hand } from './vision';
+import { PinchIntent } from './pinch';
+
+const gestureDraw = new URL('./assets/gesture-draw.jpg', import.meta.url).href;
+const gestureIntro = new URL('./assets/gesture-intro.jpg', import.meta.url).href;
+const gestureShape = new URL('./assets/gesture-shape.jpg', import.meta.url).href;
+const gesturePlay = new URL('./assets/gesture-play.jpg', import.meta.url).href;
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
@@ -26,10 +32,10 @@ app.innerHTML = `
           <div class="stage-corner corner-a">A / 001</div><div class="stage-corner corner-b">LIVE CANVAS</div>
           <div class="stage-help" id="stage-help"></div>
           <div class="intro" id="intro">
-            <div class="intro-symbol"><span>✳</span></div>
+            <div class="intro-symbol"><img src="${gestureIntro}" alt="" /></div>
             <div class="intro-kicker">YOUR AIR. YOUR INSTRUMENT.</div>
             <h2>Ready to play?</h2>
-            <p>Turn on your camera to make music with your hands,<br class="desktop-break" /> or explore with your mouse.</p>
+            <p>Pinch with both hands and pull apart to draw a string.<br class="desktop-break" /> Or explore with your mouse.</p>
             <div class="intro-actions"><button id="start-camera" class="button button-primary">✺ &nbsp; Start camera</button><button id="start-mouse" class="button button-secondary">Try with mouse <span>→</span></button></div>
             <small>Camera stays on your device. No account needed.</small>
           </div>
@@ -40,17 +46,19 @@ app.innerHTML = `
           <div class="controls" id="controls" hidden>
             <button id="switch-camera" class="control-button" title="Use camera">CAMERA</button>
             <button id="switch-mouse" class="control-button" title="Use mouse">MOUSE</button>
-            <button id="clear" class="control-button" title="Reset strings">RESET</button>
+            <button id="clear" class="control-button" title="Clear all strings">CLEAR</button>
+            <button id="save-favorite" class="control-button" title="Save your favorite strings and sounds">SAVE FAVORITE</button>
             <button id="sound" class="control-button" title="Mute or unmute sound">SOUND ON</button>
           </div>
           <span class="note-count"><span id="note-count">00</span> NOTES PLAYED</span>
         </div>
       </section>
-      <section class="soundbar" aria-label="Choose a sound"><div class="soundbar-label">PICK A SOUND <span>↘</span></div><div class="sound-options" id="sound-options"></div></section>
+      <section class="soundbar" aria-label="Choose a sound"><div class="soundbar-label">SOUND FOR NEW STRINGS <span>↘</span></div><div class="sound-options" id="sound-options"></div></section>
+      <section class="favorites" id="favorites" hidden><div class="favorites-heading"><strong>YOUR FAVORITES</strong><span>Saved in this browser</span></div><div class="favorites-list" id="favorites-list"></div></section>
       <section class="how" id="how"><h2>Get going with Airloom</h2><p class="how-lead">A little movement is all it takes. Make a string, shape its sound, and see where the music goes.</p><div class="how-grid">
-        <article><div class="step-copy"><div class="step-num">01 / MAKE</div><h3>Draw a string.</h3><p>Pinch your fingers together and move your hand to pull a string through the air. With a mouse, click and drag.</p></div><div class="step-art art-draw" aria-hidden="true"><div class="art-line"></div><span class="art-point left"></span><span class="art-point right"></span></div></article>
-        <article><div class="step-copy"><div class="step-num">02 / SHAPE</div><h3>Give it a note.</h3><p>Pinch or drag either end to tune the string. Shorter strings make brighter, higher notes.</p></div><div class="step-art art-shape" aria-hidden="true"><div class="art-line"></div><span class="art-point left"></span><span class="art-point right"></span><span class="art-orbit"></span></div></article>
-        <article><div class="step-copy"><div class="step-num">03 / PLAY</div><h3>Let it sing.</h3><p>Swipe an index finger across a string to pluck it. Faster gestures make louder notes.</p></div><div class="step-art art-play" aria-hidden="true"><div class="art-line"></div><span class="art-point left"></span><span class="art-point right"></span><div class="art-wave">∿∿∿</div></div></article>
+        <article><div class="step-copy"><div class="step-num">01 / MAKE</div><h3>Draw a string.</h3><p>Pinch with both hands, pull them apart, then release. With a mouse, click and drag.</p></div><div class="step-art art-draw"><img src="${gestureDraw}" alt="Two hands pulling a glowing turquoise string taut" loading="lazy" /></div></article>
+        <article><div class="step-copy"><div class="step-num">02 / SHAPE</div><h3>Give it a note.</h3><p>Pinch or drag either end to tune the string. Shorter strings make brighter, higher notes.</p></div><div class="step-art art-shape"><img src="${gestureShape}" alt="A hand moving a glowing lavender string endpoint" loading="lazy" /></div></article>
+        <article><div class="step-copy"><div class="step-num">03 / PLAY</div><h3>Let it sing.</h3><p>Swipe an index finger across a string to pluck it. Faster gestures make louder notes.</p></div><div class="step-art art-play"><img src="${gesturePlay}" alt="An index finger plucking a glowing string" loading="lazy" /></div></article>
       </div></section>
       <section class="about" id="about"><div class="about-orb">✳</div><div><h2>Made to be played.<br />Made to be shared.</h2><p>Airloom uses on-device hand tracking and browser audio to turn everyday movements into a playful instrument. Camera frames stay in your browser. The code is open for anyone to explore and remix.</p><a href="https://github.com/ayshahawy-cmd/air-instrument-" target="_blank" rel="noreferrer">Explore on GitHub ↗</a></div></section>
     </main>
@@ -66,12 +74,14 @@ const sound = new SoundEngine();
 const strings: AirString[] = [];
 const lastPluck = new Map<number, number>();
 const previousTips = new Map<string, Point>();
-const handGestures = new Map<string, { kind: 'draw' | 'end'; start?: Point; string?: AirString; end?: 'a' | 'b' }>();
+const pinchIntents = new Map<string, PinchIntent>();
+const endpointGestures = new Map<string, { string: AirString; end: 'a' | 'b' }>();
+let stretch: { ids: [string, string]; initialLength: number; a: Point; b: Point } | null = null;
 let draft: { a: Point; b: Point } | null = null;
 let mouseGesture: { kind: 'draw' | 'end'; start?: Point; string?: AirString; end?: 'a' | 'b' } | null = null;
 let previousMouse: Point | null = null;
 let mode: 'intro' | 'mouse' | 'camera' = 'intro';
-let voice: Voice = 'silk';
+let selectedVoice: Voice | 'mix' = 'mix';
 let width = 1;
 let height = 1;
 let nextId = 1;
@@ -103,17 +113,27 @@ function toast(message: string) {
 }
 
 function addString(a: Point, b: Point) {
-  if (distance(a, b) < 0.1) return;
-  strings.push({ id: nextId++, a: { ...a }, b: { ...b }, hue: voices.find(v => v.id === voice)!.hue + Math.random() * 24 - 12, pulse: 0, created: performance.now() });
-  if (strings.length > 8) strings.shift();
-  toast('String created — swipe through it to play');
+  if (distance(a, b) < 0.16) return;
+  const stringVoice = selectedVoice === 'mix' ? voices[(nextId - 1) % voices.length].id : selectedVoice;
+  strings.push({ id: nextId++, a: { ...a }, b: { ...b }, voice: stringVoice, hue: voices.find(v => v.id === stringVoice)!.hue, pulse: 0, created: performance.now() });
+  if (strings.length > 5) strings.shift();
+  toast(`${voices.find(v => v.id === stringVoice)!.name} string created — swipe to play`);
 }
 
-function resetStrings() {
+function clearStrings() {
   strings.length = 0;
-  addString({ x: 0.2, y: 0.38 }, { x: 0.78, y: 0.35 });
-  addString({ x: 0.25, y: 0.53 }, { x: 0.73, y: 0.57 });
-  addString({ x: 0.3, y: 0.7 }, { x: 0.67, y: 0.73 });
+  draft = null;
+  lastPluck.clear();
+  noteCount = 0;
+  get<HTMLSpanElement>('note-count').textContent = '00';
+  clearCameraGestures();
+}
+
+function clearCameraGestures() {
+  stretch = null;
+  endpointGestures.clear();
+  pinchIntents.clear();
+  previousTips.clear();
 }
 
 function nearestEndpoint(p: Point) {
@@ -127,16 +147,16 @@ function nearestEndpoint(p: Point) {
 
 function pluck(from: Point, to: Point, now: number) {
   const speed = distance(from, to);
-  if (speed < 0.018 || speed > 0.28) return;
+  if (speed < (mode === 'camera' ? 0.03 : 0.018) || speed > (mode === 'camera' ? 0.18 : 0.28)) return;
   for (const string of strings) {
-    if (now - (lastPluck.get(string.id) ?? 0) < 115) continue;
+    if (now - (lastPluck.get(string.id) ?? 0) < (mode === 'camera' ? 320 : 115)) continue;
     const hit = crossing(from, to, string.a, string.b);
     if (!hit) continue;
     lastPluck.set(string.id, now);
     string.pulse = 1;
     noteCount++;
     get<HTMLSpanElement>('note-count').textContent = `${noteCount}`.padStart(2, '0');
-    sound.play(distance(string.a, string.b), hit.position, speed, voice, (hit.position - 0.5) * 1.2);
+    sound.play(distance(string.a, string.b), hit.position, speed, string.voice, (hit.position - 0.5) * 1.2);
   }
 }
 
@@ -183,38 +203,80 @@ function videoPoint(p: Point): Point {
   return { x: ((p.x * scaledW - (scaledW - width) / 2) / width), y: ((p.y * scaledH - (scaledH - height) / 2) / height) };
 }
 
+function withinStage(p: Point) {
+  return p.x >= 0.04 && p.x <= 0.96 && p.y >= 0.04 && p.y <= 0.96;
+}
+
 function updateHands(now: number) {
   const detected = vision.detect(now);
   if (!detected) return;
   hands = detected.map(hand => ({ ...hand, points: hand.points.map(videoPoint), tip: videoPoint(hand.tip), pinch: videoPoint(hand.pinch) }));
   const seen = new Set<string>();
+  const released = new Set<string>();
+  const moved = new Set<string>();
   for (const hand of hands) {
     seen.add(hand.id);
-    const gesture = handGestures.get(hand.id);
-    if (hand.pinching) {
-      if (!gesture) {
-        const endpoint = nearestEndpoint(hand.pinch);
-        handGestures.set(hand.id, endpoint ? { kind: 'end', string: endpoint.string, end: endpoint.end } : { kind: 'draw', start: { ...hand.pinch } });
-      } else if (gesture.kind === 'end' && gesture.string && gesture.end) {
-        gesture.string[gesture.end] = { ...hand.pinch };
-      } else if (gesture.kind === 'draw' && gesture.start) {
-        draft = { a: gesture.start, b: hand.pinch };
-      }
-    } else {
-      if (gesture?.kind === 'draw' && gesture.start) addString(gesture.start, hand.pinch);
-      handGestures.delete(hand.id);
+    let intent = pinchIntents.get(hand.id);
+    if (!intent) {
+      intent = new PinchIntent();
+      pinchIntents.set(hand.id, intent);
+    }
+    const change = intent.update(hand.pinchRatio, hand.pinch, now);
+    hand.pinching = intent.active;
+    if (change.canceled) endpointGestures.delete(hand.id);
+    if (change.started) {
+      moved.add(hand.id);
+      const endpoint = nearestEndpoint(change.started);
+      if (endpoint) endpointGestures.set(hand.id, { string: endpoint.string, end: endpoint.end });
+    }
+    if (change.moved) {
+      moved.add(hand.id);
+      const endpoint = endpointGestures.get(hand.id);
+      if (endpoint && withinStage(change.moved)) endpoint.string[endpoint.end] = { ...change.moved };
+    }
+    if (change.released) {
+      released.add(hand.id);
+      endpointGestures.delete(hand.id);
+    }
+    if (!hand.pinching && !change.released && !change.canceled) {
       const previous = previousTips.get(hand.id);
       if (previous) pluck(previous, hand.tip, now);
+      previousTips.set(hand.id, hand.tip);
+    } else previousTips.delete(hand.id);
+  }
+  for (const id of pinchIntents.keys()) if (!seen.has(id)) {
+    pinchIntents.delete(id);
+    endpointGestures.delete(id);
+    previousTips.delete(id);
+  }
+  const byId = new Map(hands.map(hand => [hand.id, hand]));
+  if (stretch) {
+    const a = byId.get(stretch.ids[0]);
+    const b = byId.get(stretch.ids[1]);
+    if (!a || !b) stretch = null;
+    else {
+      if (moved.has(a.id)) stretch.a = { ...a.pinch };
+      if (moved.has(b.id)) stretch.b = { ...b.pinch };
+      if (released.has(a.id) || released.has(b.id)) {
+        if (withinStage(stretch.a) && withinStage(stretch.b) &&
+            distance(stretch.a, stretch.b) >= Math.max(0.22, stretch.initialLength + 0.14)) {
+          addString(stretch.a, stretch.b);
+        }
+        stretch = null;
+      } else if (!a.pinching || !b.pinching) stretch = null;
     }
-    previousTips.set(hand.id, hand.tip);
   }
-  for (const [id, gesture] of handGestures) if (!seen.has(id)) {
-    if (gesture.kind === 'draw' && gesture.start && draft) addString(gesture.start, draft.b);
-    handGestures.delete(id);
+  if (!stretch) {
+    const free = hands.filter(hand => hand.pinching && !endpointGestures.has(hand.id) && withinStage(hand.pinch));
+    if (free.length === 2) {
+      const initialLength = distance(free[0].pinch, free[1].pinch);
+      if (initialLength >= 0.04 && initialLength <= 0.55)
+        stretch = { ids: [free[0].id, free[1].id], initialLength, a: { ...free[0].pinch }, b: { ...free[1].pinch } };
+    }
   }
-  for (const id of previousTips.keys()) if (!seen.has(id)) previousTips.delete(id);
-  if (!hands.some(hand => hand.pinching)) draft = null;
-  get<HTMLSpanElement>('mode-status').textContent = `${hands.length} hand${hands.length === 1 ? '' : 's'} detected · pinch to draw, swipe to play`;
+  get<HTMLSpanElement>('mode-status').textContent = hands.length < 2
+    ? `${hands.length} hand${hands.length === 1 ? '' : 's'} detected · show both hands to draw`
+    : 'Pinch with both hands · pull apart · release to draw';
 }
 
 function setMode(next: 'mouse' | 'camera') {
@@ -224,11 +286,10 @@ function setMode(next: 'mouse' | 'camera') {
   get<HTMLDivElement>('intro').hidden = true;
   get<HTMLDivElement>('controls').hidden = false;
   get<HTMLSpanElement>('signal-label').textContent = next === 'camera' ? 'CAMERA LIVE' : 'MOUSE MODE';
-  get<HTMLSpanElement>('mode-status').textContent = next === 'camera' ? 'Show your hands · pinch to draw, swipe to play' : 'Drag to draw · move across a string to play';
-  get<HTMLDivElement>('stage-help').textContent = next === 'camera' ? 'PINCH + DRAG TO DRAW  /  SWIPE TO PLAY' : 'DRAG TO DRAW  /  DRAG AN END TO TUNE';
+  get<HTMLSpanElement>('mode-status').textContent = next === 'camera' ? 'Show both hands · pinch and pull apart to draw' : 'Drag to draw · move across a string to play';
+  get<HTMLDivElement>('stage-help').textContent = next === 'camera' ? 'TWO HANDS: PINCH + PULL APART + RELEASE  /  SWIPE TO PLAY' : 'DRAG TO DRAW  /  DRAG AN END TO TUNE';
   get<HTMLButtonElement>('switch-camera').classList.toggle('active', next === 'camera');
   get<HTMLButtonElement>('switch-mouse').classList.toggle('active', next === 'mouse');
-  if (!strings.length) resetStrings();
 }
 
 async function startCamera() {
@@ -243,8 +304,10 @@ async function startCamera() {
     await vision.start();
     if (request !== cameraRequest) { vision.stop(); return; }
     if (!vision.video.parentElement) stage.prepend(vision.video);
+    hands = [];
+    clearCameraGestures();
     setMode('camera');
-    toast('Camera ready — try pinching your fingers together');
+    toast('Camera ready — pinch with both hands, pull apart, then release');
   } catch (error) {
     if (request !== cameraRequest) return;
     const message = error instanceof Error ? error.message : 'Camera could not start.';
@@ -257,26 +320,109 @@ async function startCamera() {
 }
 
 get<HTMLButtonElement>('start-camera').addEventListener('click', startCamera);
-get<HTMLButtonElement>('start-mouse').addEventListener('click', async () => { ++cameraRequest; await sound.ready(); setMode('mouse'); toast('Move across a string to hear it sing'); });
+get<HTMLButtonElement>('start-mouse').addEventListener('click', async () => { ++cameraRequest; await sound.ready(); setMode('mouse'); toast('Drag to draw your first string'); });
 get<HTMLButtonElement>('switch-camera').addEventListener('click', startCamera);
-get<HTMLButtonElement>('switch-mouse').addEventListener('click', () => { ++cameraRequest; vision.stop(); hands = []; handGestures.clear(); setMode('mouse'); });
-get<HTMLButtonElement>('clear').addEventListener('click', () => { strings.length = 0; draft = null; resetStrings(); toast('Starter strings restored'); });
+get<HTMLButtonElement>('switch-mouse').addEventListener('click', () => { ++cameraRequest; vision.stop(); hands = []; clearCameraGestures(); setMode('mouse'); });
+get<HTMLButtonElement>('clear').addEventListener('click', () => { clearStrings(); toast('Canvas cleared — draw your own strings'); });
 get<HTMLButtonElement>('sound').addEventListener('click', event => { sound.muted = !sound.muted; (event.currentTarget as HTMLButtonElement).textContent = sound.muted ? 'SOUND OFF' : 'SOUND ON'; });
 
 const soundOptions = get<HTMLDivElement>('sound-options');
-for (const item of voices) {
+const soundButtons = new Map<Voice | 'mix', HTMLButtonElement>();
+for (const item of [{ id: 'mix' as const, name: 'Mix', description: 'a new sound for each string', hue: 172 }, ...voices]) {
   const button = document.createElement('button');
-  button.className = `sound-option ${item.id === voice ? 'selected' : ''}`;
+  button.className = `sound-option ${item.id === selectedVoice ? 'selected' : ''}`;
   button.innerHTML = `<span class="sound-icon" style="--hue:${item.hue}">✳</span><span><strong>${item.name}</strong><small>${item.description}</small></span>`;
   button.addEventListener('click', () => {
-    voice = item.id;
-    document.querySelectorAll('.sound-option').forEach(el => el.classList.remove('selected'));
-    button.classList.add('selected');
-    strings.forEach(string => { string.hue = item.hue; });
-    toast(`${item.name} selected`);
+    selectSound(item.id);
+    toast(`${item.name} selected for new strings`);
   });
+  soundButtons.set(item.id, button);
   soundOptions.append(button);
 }
+
+function selectSound(next: Voice | 'mix') {
+  selectedVoice = next;
+  for (const [id, button] of soundButtons) button.classList.toggle('selected', id === next);
+}
+
+type SavedString = Pick<AirString, 'a' | 'b' | 'voice'>;
+type Favorite = { id: string; savedAt: number; selectedVoice: Voice | 'mix'; strings: SavedString[] };
+const favoriteKey = 'airloom.favorites.v1';
+const isVoice = (value: unknown): value is Voice => voices.some(item => item.id === value);
+const isPoint = (value: unknown): value is Point =>
+  !!value && typeof value === 'object' &&
+  Number.isFinite((value as Point).x) && Number.isFinite((value as Point).y) &&
+  (value as Point).x >= 0 && (value as Point).x <= 1 &&
+  (value as Point).y >= 0 && (value as Point).y <= 1;
+function readFavorites(): Favorite[] {
+  try {
+    const data: unknown = JSON.parse(localStorage.getItem(favoriteKey) ?? '[]');
+    if (!Array.isArray(data)) return [];
+    return data.filter((item): item is Favorite =>
+      !!item && typeof item.id === 'string' && Number.isFinite(item.savedAt) &&
+      (item.selectedVoice === 'mix' || isVoice(item.selectedVoice)) &&
+      Array.isArray(item.strings) && item.strings.length <= 5 &&
+      item.strings.every((string: SavedString) => isPoint(string.a) && isPoint(string.b) && isVoice(string.voice))
+    ).slice(0, 8);
+  } catch { return []; }
+}
+let favorites = readFavorites();
+function persistFavorites() {
+  try { localStorage.setItem(favoriteKey, JSON.stringify(favorites)); return true; }
+  catch { toast('This browser could not save favorites'); return false; }
+}
+function renderFavorites() {
+  const section = get<HTMLElement>('favorites');
+  const list = get<HTMLDivElement>('favorites-list');
+  section.hidden = favorites.length === 0;
+  list.replaceChildren();
+  for (const favorite of favorites) {
+    const row = document.createElement('div');
+    row.className = 'favorite-row';
+    const load = document.createElement('button');
+    load.className = 'favorite-load';
+    const names = [...new Set(favorite.strings.map(string => voices.find(item => item.id === string.voice)!.name))];
+    const title = favorite.strings.length ? `${favorite.strings.length} string${favorite.strings.length === 1 ? '' : 's'}` : `${voices.find(item => item.id === favorite.selectedVoice)?.name ?? 'Mix'} sound`;
+    load.textContent = `${title} · ${names.join(', ') || 'Sound preset'}  ↗`;
+    load.title = 'Load this favorite';
+    load.addEventListener('click', async () => {
+      try { await sound.ready(); } catch { toast('Sound could not start'); return; }
+      if (mode === 'intro') setMode('mouse');
+      clearCameraGestures();
+      strings.length = 0;
+      for (const saved of favorite.strings) {
+        const item = voices.find(v => v.id === saved.voice)!;
+        strings.push({ id: nextId++, a: { ...saved.a }, b: { ...saved.b }, voice: saved.voice, hue: item.hue, pulse: 0, created: performance.now() });
+      }
+      selectSound(favorite.selectedVoice);
+      toast('Favorite loaded');
+      stage.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    const remove = document.createElement('button');
+    remove.className = 'favorite-remove';
+    remove.textContent = '×';
+    remove.title = 'Remove this favorite';
+    remove.setAttribute('aria-label', `Remove favorite: ${title}`);
+    remove.addEventListener('click', () => {
+      favorites = favorites.filter(item => item.id !== favorite.id);
+      if (persistFavorites()) renderFavorites();
+    });
+    row.append(load, remove);
+    list.append(row);
+  }
+}
+get<HTMLButtonElement>('save-favorite').addEventListener('click', () => {
+  if (!strings.length && selectedVoice === 'mix') { toast('Draw a string or choose a sound first'); return; }
+  favorites.unshift({
+    id: `${Date.now()}-${Math.random()}`,
+    savedAt: Date.now(),
+    selectedVoice,
+    strings: strings.map(string => ({ a: { ...string.a }, b: { ...string.b }, voice: string.voice })),
+  });
+  favorites = favorites.slice(0, 8);
+  if (persistFavorites()) { renderFavorites(); toast('Favorite saved on this device'); }
+});
+renderFavorites();
 
 function drawString(string: AirString | { a: Point; b: Point; hue: number; pulse: number }, now: number, dashed = false) {
   const a = { x: string.a.x * width, y: string.a.y * height };
@@ -347,7 +493,10 @@ function frame(now: number) {
     halo.addColorStop(0, 'rgba(105,227,200,.055)'); halo.addColorStop(1, 'transparent');
     ctx.fillStyle = halo; ctx.fillRect(0, 0, width, height);
     for (const string of strings) drawString(string, now);
-    if (draft) drawString({ ...draft, hue: voices.find(v => v.id === voice)!.hue, pulse: 0 }, now, true);
+    const previewVoice = selectedVoice === 'mix' ? voices[(nextId - 1) % voices.length] : voices.find(v => v.id === selectedVoice)!;
+    if (draft && distance(draft.a, draft.b) > 0.04) drawString({ ...draft, hue: previewVoice.hue, pulse: 0 }, now, true);
+    if (stretch && distance(stretch.a, stretch.b) > stretch.initialLength + 0.05)
+      drawString({ a: stretch.a, b: stretch.b, hue: previewVoice.hue, pulse: 0 }, now, true);
     if (mode === 'camera') drawHands(now);
   }
   requestAnimationFrame(frame);

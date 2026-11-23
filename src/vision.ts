@@ -1,7 +1,7 @@
 import { FilesetResolver, HandLandmarker, type NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { distance, type Point } from './geometry';
 
-export type Hand = { id: string; points: Point[]; tip: Point; pinch: Point; pinching: boolean };
+export type Hand = { id: string; points: Point[]; tip: Point; pinch: Point; pinchRatio: number; pinching: boolean };
 
 export class Vision {
   private tracker?: HandLandmarker;
@@ -47,13 +47,14 @@ export class Vision {
     return result.landmarks.map((landmarks, i) => {
       const points = landmarks.map((p: NormalizedLandmark) => ({ x: 1 - p.x, y: p.y }));
       const span = Math.max(0.04, distance(points[0], points[9]));
-      const pinching = distance(points[4], points[8]) < span * 0.48;
+      const pinchRatio = distance(points[4], points[8]) / span;
       return {
         id: result.handedness[i]?.[0]?.categoryName ?? `${i}`,
         points,
         tip: points[8],
         pinch: { x: (points[4].x + points[8].x) / 2, y: (points[4].y + points[8].y) / 2 },
-        pinching,
+        pinchRatio,
+        pinching: false,
       };
     });
   }
