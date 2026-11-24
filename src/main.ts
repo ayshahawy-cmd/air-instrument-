@@ -35,6 +35,7 @@ app.innerHTML = `
           <canvas id="canvas" aria-label="Interactive strings"></canvas>
           <div class="stage-corner corner-a">A / 001</div><div class="stage-corner corner-b" id="active-note">LIVE CANVAS</div>
           <div class="stage-help" id="stage-help"></div>
+          <div class="gesture-debug" id="gesture-debug" hidden></div>
           <div class="intro" id="intro">
             <div class="intro-symbol"><img src="${gestureIntro}" alt="" /></div>
             <div class="intro-kicker">YOUR AIR. YOUR INSTRUMENT.</div>
@@ -82,6 +83,9 @@ app.innerHTML = `
 
 const get = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const stage = get<HTMLDivElement>('stage');
+const debugEnabled = new URLSearchParams(window.location.search).get('debug') === '1';
+const debugPanel = get<HTMLDivElement>('gesture-debug');
+debugPanel.hidden = !debugEnabled;
 const canvas = get<HTMLCanvasElement>('canvas');
 const ctx = canvas.getContext('2d')!;
 const vision = new Vision();
@@ -278,6 +282,8 @@ function updateHands(now: number) {
       cameraDraft = null;
       toast('Hand lost · start the string again with a double-tap');
     }
+    if (debugEnabled && now - cameraLastResultAt > 250)
+      debugPanel.textContent = `CAMERA DEBUG · no new frame · age ${Math.round(now - cameraLastResultAt)}ms`;
     return;
   }
   cameraLastResultAt = now;
@@ -389,6 +395,14 @@ function updateHands(now: number) {
     : hands.some(item => item.touching) ? 'Fingers together · separate them to complete a tap'
     : hands.some(item => item.pose === 'open') ? 'Fingers apart · double-tap to start a string'
     : hands.length ? 'Spread thumb and index to begin' : 'Show one hand · double-tap to start a string';
+  if (debugEnabled) {
+    const lines = hands.map(hand => {
+      const data = pinchPoses.get(hand.id)!.diagnostics;
+      const tap = tapIntents.get(hand.id)!;
+      return `${hand.id} ${data.state.toUpperCase()} · tips ${hand.openRatio.toFixed(2)} · contact ${hand.pinchRatio.toFixed(2)} · close ≤${data.closeAt.toFixed(2)} · open ≥${data.openAt.toFixed(2)} · ${tap.waitingForSecondTap ? 'TAP 1/2' : 'READY'}`;
+    });
+    debugPanel.textContent = ['CAMERA DEBUG · image stays on this device', ...(lines.length ? lines : ['No hands found'])].join('\n');
+  }
 }
 
 function setMode(next: 'mouse' | 'camera') {

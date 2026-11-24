@@ -1,6 +1,7 @@
 import { FilesetResolver, HandLandmarker, type NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { distance, type Point } from './geometry';
 import { HandIds } from './hand-ids';
+import { handGapRatios } from './hand-geometry';
 
 export type Hand = { id: string; points: Point[]; tip: Point; pinch: Point; pinchRatio: number; openRatio: number; palmSpan: number; pinching: boolean; touching: boolean; pose: 'open' | 'closed' | 'unknown' };
 
@@ -53,18 +54,15 @@ export class Vision {
     const ids = this.ids.assign(centers, now);
     return result.landmarks.map((landmarks, i) => {
       const points = landmarks.map((p: NormalizedLandmark) => ({ x: 1 - p.x, y: p.y }));
-      const span = Math.max(0.025, distance(points[0], points[9]), distance(points[5], points[17]) * 1.1);
-      const tipGap = distance(points[4], points[8]);
-      const jointGap = Math.min(distance(points[4], points[7]), distance(points[3], points[8]));
-      const pinchRatio = Math.min(tipGap, jointGap * 1.08) / span;
+      const gaps = handGapRatios(points, (this.video.videoWidth || 1) / (this.video.videoHeight || 1));
       return {
         id: ids[i],
         points,
         tip: points[8],
         pinch: { x: (points[4].x + points[8].x) / 2, y: (points[4].y + points[8].y) / 2 },
-        pinchRatio,
-        openRatio: tipGap / span,
-        palmSpan: span,
+        pinchRatio: gaps.contact,
+        openRatio: gaps.tips,
+        palmSpan: Math.max(distance(points[0], points[9]), distance(points[5], points[17]) * 1.1),
         pinching: false,
         touching: false,
         pose: 'unknown',

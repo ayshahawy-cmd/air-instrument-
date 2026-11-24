@@ -11,6 +11,15 @@ export class PinchPoseTracker {
   private closedTipGap = 0;
   private closedContactGap = 0;
 
+  get diagnostics() {
+    return {
+      state: this.state,
+      baseline: this.baseline,
+      openAt: clamp(this.baseline * 0.82, 0.36, 0.48),
+      closeAt: clamp(this.baseline * 0.72, 0.2, 0.39),
+    };
+  }
+
   update(contactGap: number, tipGap: number): PinchPose {
     if (!Number.isFinite(contactGap) || !Number.isFinite(tipGap)) return this.state;
     this.baseline = Math.max(tipGap, this.baseline * 0.985);
