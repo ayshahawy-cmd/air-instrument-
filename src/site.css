@@ -305,7 +305,7 @@ footer,
 }
 
 .soundbar-label span { color: #aaa; }
-.sound-options { gap: 10px; grid-template-columns: repeat(5, 1fr); }
+.sound-options { gap: 10px; grid-template-columns: repeat(4, 1fr); }
 
 .sound-option {
   color: #eee;
@@ -332,6 +332,71 @@ footer,
 .sound-option small { color: #8c8c8c; font-size: 11px; }
 .sound-option.selected small { color: #5b5b5b; }
 .sound-icon { border-radius: 50%; }
+
+.play-links {
+  max-width: 1320px;
+  margin: 18px auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 15px;
+  color: #929292;
+  font-size: 12px;
+}
+.play-links button { border: 1px solid #424242; border-radius: 999px; padding: 10px 18px; background: #212121; color: #fff; font-size: 13px; }
+.play-links button:hover { background: #333; }
+
+.play-settings {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 13px 20px;
+  padding: 12px 22px;
+  border-top: 1px solid #2d2d2d;
+  background: #141414;
+}
+.play-settings[hidden] { display: none; }
+.setting-group { display: flex; align-items: center; gap: 5px; }
+.setting-group > span { margin-right: 5px; color: #929292; font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+.setting-button { border: 1px solid #3b3b3b; border-radius: 999px; padding: 6px 11px; background: #1d1d1d; color: #aaa; font-size: 11px; }
+.setting-button:hover { color: #fff; border-color: #777; }
+.setting-button.selected { background: #f3f3f0; color: #151515; border-color: #f3f3f0; }
+.setting-hint { margin-left: auto; color: #858585; font-size: 11px; }
+.fullscreen-sounds { display: none; }
+
+.string-name { border: 0; background: transparent; cursor: pointer; }
+.string-name:hover, .string-name.active { color: #fff; background: #303030; }
+
+#play:fullscreen,
+#play.fullscreen-fallback {
+  max-width: none;
+  width: 100vw;
+  height: 100dvh;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  background: #0c0d0e;
+  overflow: hidden;
+}
+#play:fullscreen .stage,
+#play.fullscreen-fallback .stage { flex: 1; min-height: 0; height: auto; }
+#play:fullscreen .fullscreen-sounds,
+#play.fullscreen-fallback .fullscreen-sounds {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 9px 22px 14px;
+  background: #101010;
+}
+.full-sound-button { flex: 1 0 auto; border: 1px solid #454545; border-radius: 999px; padding: 8px 13px; background: transparent; color: #aaa; font-size: 12px; }
+.full-sound-button.selected { background: #fff; border-color: #fff; color: #111; }
+.full-sound-button:hover { border-color: #fff; color: #fff; }
+.full-sound-button.selected:hover { color: #111; }
+#play.fullscreen-fallback { position: fixed; inset: 0; z-index: 100; }
+body.fullscreen-body { overflow: hidden; }
 
 .favorites {
   max-width: 1320px;
@@ -502,7 +567,7 @@ footer a { color: #bdbdbd; }
 @media (max-width: 900px) {
   .topbar { padding: 0 25px; }
   .topnav { gap: 23px; }
-  .instrument, .strings-panel, .soundbar, .favorites, .how, .about { margin-left: 20px; margin-right: 20px; }
+  .instrument, .strings-panel, .soundbar, .favorites, .how, .about, .play-links { margin-left: 20px; margin-right: 20px; }
   .how article, .how article:nth-child(even) { gap: 32px; }
   .about { padding: 60px; gap: 35px; }
 }
@@ -525,7 +590,7 @@ footer a { color: #bdbdbd; }
   .hero-actions { flex-direction: column; gap: 10px; margin-top: 28px; }
   .hero-cta, .hero-secondary { min-height: 41px; font-size: 13px; padding: 0 19px; }
 
-  .instrument, .strings-panel, .soundbar, .favorites, .how, .about { margin-left: 14px; margin-right: 14px; }
+  .instrument, .strings-panel, .soundbar, .favorites, .how, .about, .play-links { margin-left: 14px; margin-right: 14px; }
   .instrument { border-radius: 24px; }
   .instrument-top, .instrument-bottom { padding: 0 14px; }
   .instrument-title, .signal { font-size: 9px; }
@@ -541,6 +606,11 @@ footer a { color: #bdbdbd; }
   .intro small { font-size: 9px; }
   .instrument-bottom { height: auto; min-height: 62px; padding: 10px 13px; }
   .control-button { font-size: 9px; }
+  .play-settings { padding: 11px 13px; gap: 9px 12px; }
+  .setting-hint { flex: 1 1 100%; margin: 0; }
+  .setting-group > span { font-size: 9px; }
+  .setting-button { padding: 5px 9px; font-size: 10px; }
+  .play-links { justify-content: flex-start; }
   .soundbar { margin-top: 19px; }
   .soundbar-label { font-size: 12px; margin-bottom: 12px; }
   .sound-options { gap: 8px; grid-template-columns: repeat(2, 1fr); }

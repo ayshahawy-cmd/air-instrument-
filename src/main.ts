@@ -2,6 +2,8 @@ import './style.css';
 import './site.css';
 import { SoundEngine, voices, type Voice } from './audio';
 import { clamp, crossing, distance, type AirString, type Point } from './geometry';
+import { midiForLength, noteName, type ScaleMode, type TuningMode } from './pitch';
+import { drawVoiceVisual } from './visuals';
 import { Vision, type Hand } from './vision';
 import { PinchIntent } from './pinch';
 
@@ -28,13 +30,13 @@ app.innerHTML = `
         <div class="stage" id="stage">
           <div class="stage-grid"></div><div class="stage-vignette"></div>
           <canvas id="canvas" aria-label="Interactive strings"></canvas>
-          <div class="stage-corner corner-a">A / 001</div><div class="stage-corner corner-b">LIVE CANVAS</div>
+          <div class="stage-corner corner-a">A / 001</div><div class="stage-corner corner-b" id="active-note">LIVE CANVAS</div>
           <div class="stage-help" id="stage-help"></div>
           <div class="intro" id="intro">
             <div class="intro-symbol"><img src="${gestureIntro}" alt="" /></div>
             <div class="intro-kicker">YOUR AIR. YOUR INSTRUMENT.</div>
             <h2>Ready to play?</h2>
-            <p>Pinch thumb and index finger, move your hand, then release.<br class="desktop-break" /> Or explore with your mouse.</p>
+            <p>Pinch thumb and index finger, move your hand, then release.<br class="desktop-break" /> Or pinch with both hands and pull apart. Mouse works too.</p>
             <div class="intro-actions"><button id="start-camera" class="button button-primary">✺ &nbsp; Start camera</button><button id="start-mouse" class="button button-secondary">Try with mouse <span>→</span></button></div>
             <small>Camera stays on your device. No account needed.</small>
           </div>
@@ -49,10 +51,19 @@ app.innerHTML = `
             <button id="clear" class="control-button" title="Clear all strings">CLEAR</button>
             <button id="save-favorite" class="control-button" title="Save your favorite strings and sounds">SAVE FAVORITE</button>
             <button id="sound" class="control-button" title="Mute or unmute sound">SOUND ON</button>
+            <button id="fullscreen" class="control-button" title="Toggle full screen">FULL SCREEN ⤢</button>
           </div>
           <span class="note-count"><span id="note-count">00</span> NOTES PLAYED</span>
         </div>
+        <div class="play-settings" id="play-settings" hidden>
+          <div class="setting-group"><span>TUNING</span><button id="tune-length" class="setting-button selected">Length</button><button id="tune-tension" class="setting-button">Tension</button></div>
+          <div class="setting-group"><span>SCALE</span><button id="scale-major" class="setting-button selected">Major</button><button id="scale-minor" class="setting-button">Minor</button></div>
+          <div class="setting-group"><span>MAKE A CHORD</span><button id="chord-1" class="setting-button">1</button><button id="chord-3" class="setting-button">3</button><button id="chord-6" class="setting-button">6</button></div>
+          <span class="setting-hint">Optional presets · Clear leaves the canvas empty</span>
+        </div>
+        <div class="fullscreen-sounds" id="fullscreen-sounds" aria-label="Sounds in full screen"></div>
       </section>
+      <div class="play-links"><button id="fullscreen-launch" type="button">Open full screen ↗</button><span>Play larger, with your camera or mouse.</span></div>
       <section class="strings-panel" id="strings-panel" hidden><div class="strings-heading"><strong>YOUR STRINGS</strong><span>Move an end to shorten it, or delete one below.</span></div><div class="strings-list" id="strings-list"></div></section>
       <section class="soundbar" aria-label="Choose a sound"><div class="soundbar-label">SOUND FOR NEW STRINGS <span>↘</span></div><div class="sound-options" id="sound-options"></div></section>
       <section class="favorites" id="favorites" hidden><div class="favorites-heading"><strong>YOUR FAVORITES</strong><span>Saved in this browser</span></div><div class="favorites-list" id="favorites-list"></div></section>
@@ -78,12 +89,16 @@ const previousTips = new Map<string, Point>();
 const pinchIntents = new Map<string, PinchIntent>();
 const handLastSeen = new Map<string, number>();
 const endpointGestures = new Map<string, { string: AirString; end: 'a' | 'b' }>();
-let cameraDraft: { handId: string; a: Point; b: Point } | null = null;
+let cameraDraft: { handId: string; partnerId?: string; a: Point; b: Point } | null = null;
 let draft: { a: Point; b: Point } | null = null;
 let mouseGesture: { kind: 'draw' | 'end'; start?: Point; string?: AirString; end?: 'a' | 'b' } | null = null;
 let previousMouse: Point | null = null;
 let mode: 'intro' | 'mouse' | 'camera' = 'intro';
-let selectedVoice: Voice | 'mix' = 'mix';
+let selectedVoice: Voice | 'mix' = 'clean';
+let tuningMode: TuningMode = 'length';
+let scaleMode: ScaleMode = 'major';
+let activeStringId: number | null = null;
+let notePop: { text: string; x: number; y: number; at: number; hue: number } | null = null;
 let width = 1;
 let height = 1;
 let nextId = 1;
@@ -114,17 +129,33 @@ function toast(message: string) {
   lastToastTimeout = window.setTimeout(() => el.classList.remove('visible'), 3200);
 }
 
+function pitchOf(string: AirString): number {
+  return midiForLength(distance(string.a, string.b), string.voice, tuningMode, scaleMode) + (string.interval ?? 0);
+}
+
+function refreshNotes() {
+  const active = strings.find(string => string.id === activeStringId);
+  get<HTMLDivElement>('active-note').textContent = active ? `${noteName(pitchOf(active))} · ${voices.find(voice => voice.id === active.voice)?.name}` : 'LIVE CANVAS';
+  for (const string of strings) sound.retune(string.id, pitchOf(string));
+  renderStrings();
+}
+
 function addString(a: Point, b: Point) {
   if (distance(a, b) < 0.075) { toast('Move a little farther before releasing to make a string'); return; }
   const stringVoice = selectedVoice === 'mix' ? voices[(nextId - 1) % voices.length].id : selectedVoice;
-  strings.push({ id: nextId++, a: { ...a }, b: { ...b }, voice: stringVoice, hue: voices.find(v => v.id === stringVoice)!.hue, pulse: 0, created: performance.now() });
-  if (strings.length > 5) strings.shift();
-  renderStrings();
+  const created = { id: nextId++, a: { ...a }, b: { ...b }, voice: stringVoice, hue: voices.find(v => v.id === stringVoice)!.hue, pulse: 0, created: performance.now() };
+  strings.push(created);
+  if (strings.length > 6) strings.shift();
+  activeStringId = created.id;
+  refreshNotes();
   toast(`${voices.find(v => v.id === stringVoice)!.name} string created — swipe to play`);
 }
 
 function clearStrings() {
   strings.length = 0;
+  activeStringId = null;
+  notePop = null;
+  get<HTMLDivElement>('active-note').textContent = 'LIVE CANVAS';
   draft = null;
   lastPluck.clear();
   noteCount = 0;
@@ -161,7 +192,11 @@ function pluck(from: Point, to: Point, now: number) {
     string.pulse = 1;
     noteCount++;
     get<HTMLSpanElement>('note-count').textContent = `${noteCount}`.padStart(2, '0');
-    sound.play(distance(string.a, string.b), hit.position, speed, string.voice, (hit.position - 0.5) * 1.2);
+    const midi = pitchOf(string);
+    activeStringId = string.id;
+    get<HTMLDivElement>('active-note').textContent = `${noteName(midi)} · ${voices.find(voice => voice.id === string.voice)?.name}`;
+    notePop = { text: noteName(midi), x: string.a.x + (string.b.x - string.a.x) * hit.position, y: string.a.y + (string.b.y - string.a.y) * hit.position, at: now, hue: string.hue };
+    sound.play(string.id, midi, hit.position, speed, string.voice, (hit.position - 0.5) * 1.2);
   }
 }
 
@@ -184,7 +219,13 @@ stage.addEventListener('pointermove', event => {
   if (mode !== 'mouse') return;
   const p = pointerPoint(event);
   stage.style.cursor = mouseGesture ? 'grabbing' : nearestEndpoint(p) ? 'grab' : 'crosshair';
-  if (mouseGesture?.kind === 'end' && mouseGesture.string && mouseGesture.end) mouseGesture.string[mouseGesture.end] = p;
+  if (mouseGesture?.kind === 'end' && mouseGesture.string && mouseGesture.end) {
+    const selectedString = mouseGesture.string;
+    selectedString[mouseGesture.end] = p;
+    activeStringId = selectedString.id;
+    sound.retune(selectedString.id, pitchOf(selectedString));
+    get<HTMLDivElement>('active-note').textContent = `${noteName(pitchOf(selectedString))} · ${voices.find(voice => voice.id === selectedString.voice)?.name}`;
+  }
   else if (mouseGesture?.kind === 'draw' && draft) draft.b = p;
   else if (previousMouse) pluck(previousMouse, p, performance.now());
   previousMouse = p;
@@ -192,7 +233,7 @@ stage.addEventListener('pointermove', event => {
 function endMouse(event: PointerEvent) {
   if (mode !== 'mouse' || !mouseGesture) return;
   if (mouseGesture.kind === 'draw' && mouseGesture.start) addString(mouseGesture.start, pointerPoint(event));
-  if (mouseGesture.kind === 'end') renderStrings();
+  if (mouseGesture.kind === 'end') refreshNotes();
   mouseGesture = null;
   draft = null;
 }
@@ -234,26 +275,41 @@ function updateHands(now: number) {
     hand.pinching = intent.active;
     if (change.canceled) {
       endpointGestures.delete(hand.id);
-      if (cameraDraft?.handId === hand.id) cameraDraft = null;
+      if (cameraDraft?.handId === hand.id || cameraDraft?.partnerId === hand.id) cameraDraft = null;
     }
     if (change.started) {
       const endpoint = nearestEndpoint(change.started);
       if (endpoint) endpointGestures.set(hand.id, { string: endpoint.string, end: endpoint.end });
-      else if (!cameraDraft && withinStage(change.started))
-        cameraDraft = { handId: hand.id, a: { ...change.started }, b: { ...change.started } };
+      else if (withinStage(change.started)) {
+        if (cameraDraft && cameraDraft.handId !== hand.id && !cameraDraft.partnerId) {
+          cameraDraft.partnerId = hand.id;
+          cameraDraft.b = { ...change.started };
+        } else if (!cameraDraft) cameraDraft = { handId: hand.id, a: { ...change.started }, b: { ...change.started } };
+      }
     }
     if (change.moved) {
       const endpoint = endpointGestures.get(hand.id);
-      if (endpoint && withinStage(change.moved)) endpoint.string[endpoint.end] = smoothPoint(endpoint.string[endpoint.end], change.moved);
-      else if (cameraDraft?.handId === hand.id && withinStage(change.moved)) cameraDraft.b = smoothPoint(cameraDraft.b, change.moved);
+      if (endpoint && withinStage(change.moved)) {
+        endpoint.string[endpoint.end] = smoothPoint(endpoint.string[endpoint.end], change.moved);
+        activeStringId = endpoint.string.id;
+        sound.retune(endpoint.string.id, pitchOf(endpoint.string));
+        get<HTMLDivElement>('active-note').textContent = `${noteName(pitchOf(endpoint.string))} · ${voices.find(voice => voice.id === endpoint.string.voice)?.name}`;
+      }
+      else if (cameraDraft && withinStage(change.moved)) {
+        if (cameraDraft.partnerId === hand.id) cameraDraft.b = smoothPoint(cameraDraft.b, change.moved);
+        else if (cameraDraft.handId === hand.id) {
+          if (cameraDraft.partnerId) cameraDraft.a = smoothPoint(cameraDraft.a, change.moved);
+          else cameraDraft.b = smoothPoint(cameraDraft.b, change.moved);
+        }
+      }
     }
     if (change.released) {
-      if (cameraDraft?.handId === hand.id) {
+      if (cameraDraft?.handId === hand.id || cameraDraft?.partnerId === hand.id) {
         const { a, b } = cameraDraft;
         cameraDraft = null;
         addString(a, b);
       }
-      if (endpointGestures.has(hand.id)) renderStrings();
+      if (endpointGestures.has(hand.id)) refreshNotes();
       endpointGestures.delete(hand.id);
     }
     if (!hand.pinching && !change.released && !change.canceled) {
@@ -268,10 +324,10 @@ function updateHands(now: number) {
     pinchIntents.delete(id);
     handLastSeen.delete(id);
     endpointGestures.delete(id);
-    if (cameraDraft?.handId === id) cameraDraft = null;
+    if (cameraDraft?.handId === id || cameraDraft?.partnerId === id) cameraDraft = null;
   }
   get<HTMLSpanElement>('mode-status').textContent = cameraDraft
-    ? 'Drawing · move your pinched hand, then release'
+    ? cameraDraft.partnerId ? 'Drawing · pull both hands apart, then release' : 'Drawing · move your pinched hand, then release'
     : endpointGestures.size ? 'Shaping · move the endpoint to shorten or stretch'
     : hands.length ? 'Hand detected · pinch, move, and release to draw' : 'Show one hand · open, then pinch to draw';
 }
@@ -282,6 +338,7 @@ function setMode(next: 'mouse' | 'camera') {
   stage.classList.toggle('camera-mode', next === 'camera');
   get<HTMLDivElement>('intro').hidden = true;
   get<HTMLDivElement>('controls').hidden = false;
+  get<HTMLDivElement>('play-settings').hidden = false;
   get<HTMLSpanElement>('signal-label').textContent = next === 'camera' ? 'CAMERA LIVE' : 'MOUSE MODE';
   get<HTMLSpanElement>('mode-status').textContent = next === 'camera' ? 'Show one hand · open, then pinch to draw' : 'Drag to draw · move across a string to play';
   get<HTMLDivElement>('stage-help').textContent = next === 'camera' ? 'PINCH + MOVE + RELEASE TO DRAW  /  PINCH AN END TO SHORTEN' : 'DRAG TO DRAW  /  DRAG AN END TO TUNE';
@@ -325,7 +382,8 @@ get<HTMLButtonElement>('undo').addEventListener('click', () => {
   if (!removed) { toast('No strings to undo'); return; }
   lastPluck.delete(removed.id);
   for (const [handId, gesture] of endpointGestures) if (gesture.string.id === removed.id) endpointGestures.delete(handId);
-  renderStrings();
+  activeStringId = strings.at(-1)?.id ?? null;
+  refreshNotes();
   toast('Last string removed');
 });
 get<HTMLButtonElement>('clear').addEventListener('click', () => { clearStrings(); toast('Canvas cleared — draw your own strings'); });
@@ -333,22 +391,132 @@ get<HTMLButtonElement>('sound').addEventListener('click', event => { sound.muted
 
 const soundOptions = get<HTMLDivElement>('sound-options');
 const soundButtons = new Map<Voice | 'mix', HTMLButtonElement>();
+const fullSoundButtons = new Map<Voice | 'mix', HTMLButtonElement>();
 for (const item of [{ id: 'mix' as const, name: 'Mix', description: 'a new sound for each string', hue: 172 }, ...voices]) {
   const button = document.createElement('button');
   button.className = `sound-option ${item.id === selectedVoice ? 'selected' : ''}`;
   button.innerHTML = `<span class="sound-icon" style="--hue:${item.hue}">✳</span><span><strong>${item.name}</strong><small>${item.description}</small></span>`;
   button.addEventListener('click', () => {
-    selectSound(item.id);
-    toast(`${item.name} selected for new strings`);
+    selectSound(item.id, true);
+    toast(`${item.name} selected${item.id === 'mix' ? ' for new strings' : ' · active string updated'}`);
   });
   soundButtons.set(item.id, button);
   soundOptions.append(button);
+  const fullButton = document.createElement('button');
+  fullButton.className = `full-sound-button ${item.id === selectedVoice ? 'selected' : ''}`;
+  fullButton.textContent = item.name;
+  fullButton.addEventListener('click', () => selectSound(item.id, true));
+  fullSoundButtons.set(item.id, fullButton);
+  get<HTMLDivElement>('fullscreen-sounds').append(fullButton);
 }
 
-function selectSound(next: Voice | 'mix') {
+function selectSound(next: Voice | 'mix', applyToActive = false) {
   selectedVoice = next;
   for (const [id, button] of soundButtons) button.classList.toggle('selected', id === next);
+  for (const [id, button] of fullSoundButtons) button.classList.toggle('selected', id === next);
+  if (applyToActive && next !== 'mix') {
+    const active = strings.find(string => string.id === activeStringId);
+    if (active) {
+      active.voice = next;
+      active.hue = voices.find(voice => voice.id === next)!.hue;
+      refreshNotes();
+    }
+  }
 }
+
+function setTuning(next: TuningMode) {
+  tuningMode = next;
+  get<HTMLButtonElement>('tune-length').classList.toggle('selected', next === 'length');
+  get<HTMLButtonElement>('tune-tension').classList.toggle('selected', next === 'tension');
+  refreshNotes();
+  toast(next === 'length' ? 'Length mode · shorter strings play higher' : 'Tension mode · longer strings play higher');
+}
+
+function setScale(next: ScaleMode) {
+  scaleMode = next;
+  get<HTMLButtonElement>('scale-major').classList.toggle('selected', next === 'major');
+  get<HTMLButtonElement>('scale-minor').classList.toggle('selected', next === 'minor');
+  refreshNotes();
+  toast(`${next === 'major' ? 'Major' : 'Minor'} pentatonic scale`);
+}
+
+function makeChord(count: 1 | 3 | 6) {
+  if (mode === 'intro') { toast('Start camera or mouse first'); return; }
+  clearCameraGestures();
+  strings.length = 0;
+  lastPluck.clear();
+  const intervals = count === 1 ? [0] : count === 3 ? [0, 7, 12] : [0, 4, 7, 12, 16, 19];
+  intervals.forEach((interval, index) => {
+    const voice = selectedVoice === 'mix' ? voices[index % voices.length].id : selectedVoice;
+    const spread = count === 1 ? 0 : count === 3 ? 0.16 : 0.115;
+    const y = 0.5 + (index - (count - 1) / 2) * spread;
+    strings.push({ id: nextId++, a: { x: 0.2, y }, b: { x: 0.8, y: y - 0.025 }, voice, hue: voices.find(item => item.id === voice)!.hue, pulse: 0, interval, created: performance.now() });
+  });
+  activeStringId = strings[0]?.id ?? null;
+  refreshNotes();
+  toast(`${count} string${count === 1 ? '' : 's'} ready · swipe to play`);
+}
+
+get<HTMLButtonElement>('tune-length').addEventListener('click', () => setTuning('length'));
+get<HTMLButtonElement>('tune-tension').addEventListener('click', () => setTuning('tension'));
+get<HTMLButtonElement>('scale-major').addEventListener('click', () => setScale('major'));
+get<HTMLButtonElement>('scale-minor').addEventListener('click', () => setScale('minor'));
+for (const count of [1, 3, 6] as const) get<HTMLButtonElement>(`chord-${count}`).addEventListener('click', () => makeChord(count));
+
+const instrument = get<HTMLElement>('play');
+function isFullScreen() { return document.fullscreenElement === instrument || instrument.classList.contains('fullscreen-fallback'); }
+function useFullScreenFallback() {
+  instrument.classList.add('fullscreen-fallback');
+  document.body.classList.add('fullscreen-body');
+  updateFullScreenButtons();
+}
+async function toggleFullScreen() {
+  if (document.fullscreenElement === instrument) { await document.exitFullscreen(); return; }
+  if (instrument.classList.contains('fullscreen-fallback')) { instrument.classList.remove('fullscreen-fallback'); document.body.classList.remove('fullscreen-body'); updateFullScreenButtons(); return; }
+  try {
+    if (instrument.requestFullscreen) await instrument.requestFullscreen();
+    else useFullScreenFallback();
+  } catch { useFullScreenFallback(); }
+}
+function updateFullScreenButtons() {
+  const active = isFullScreen();
+  get<HTMLButtonElement>('fullscreen').textContent = active ? 'EXIT FULL SCREEN ↙' : 'FULL SCREEN ⤢';
+  get<HTMLButtonElement>('fullscreen-launch').textContent = active ? 'Exit full screen ↙' : 'Open full screen ↗';
+}
+document.addEventListener('fullscreenchange', updateFullScreenButtons);
+get<HTMLButtonElement>('fullscreen').addEventListener('click', toggleFullScreen);
+get<HTMLButtonElement>('fullscreen-launch').addEventListener('click', toggleFullScreen);
+
+function strum() {
+  strings.forEach((string, index) => window.setTimeout(() => {
+    if (!strings.some(item => item.id === string.id)) return;
+    const midi = pitchOf(string);
+    string.pulse = 1;
+    activeStringId = string.id;
+    get<HTMLDivElement>('active-note').textContent = `${noteName(midi)} · ${voices.find(voice => voice.id === string.voice)?.name}`;
+    notePop = { text: noteName(midi), x: (string.a.x + string.b.x) / 2, y: (string.a.y + string.b.y) / 2, at: performance.now(), hue: string.hue };
+    sound.play(string.id, midi, 0.5, 0.12, string.voice, (index - (strings.length - 1) / 2) * 0.22);
+    noteCount++;
+    get<HTMLSpanElement>('note-count').textContent = `${noteCount}`.padStart(2, '0');
+  }, index * 65));
+}
+
+window.addEventListener('keydown', event => {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.repeat || mode === 'intro') return;
+  const element = event.target as HTMLElement;
+  if (element.matches('input, textarea, select, [contenteditable="true"]')) return;
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    event.preventDefault();
+    const current = selectedVoice === 'mix' ? 0 : voices.findIndex(voice => voice.id === selectedVoice);
+    selectSound(voices[(current + (event.key === 'ArrowRight' ? 1 : voices.length - 1)) % voices.length].id, true);
+  } else if (event.key === '1' || event.key === '3' || event.key === '6') makeChord(Number(event.key) as 1 | 3 | 6);
+  else if (event.key.toLowerCase() === 't') setTuning(tuningMode === 'length' ? 'tension' : 'length');
+  else if (event.key.toLowerCase() === 'm') setScale(scaleMode === 'major' ? 'minor' : 'major');
+  else if (event.key.toLowerCase() === 'c') { clearStrings(); toast('Canvas cleared'); }
+  else if (event.key === 'Backspace') { event.preventDefault(); get<HTMLButtonElement>('undo').click(); }
+  else if (event.key === ' ') { event.preventDefault(); strum(); }
+  else if (event.key.toLowerCase() === 'f') toggleFullScreen();
+});
 
 function renderStrings() {
   const section = get<HTMLElement>('strings-panel');
@@ -358,9 +526,12 @@ function renderStrings() {
   strings.forEach((string, index) => {
     const row = document.createElement('div');
     row.className = 'string-row';
-    const name = document.createElement('span');
+    const name = document.createElement('button');
     name.className = 'string-name';
-    name.innerHTML = `<i style="--hue:${string.hue}"></i> String ${index + 1} · ${voices.find(item => item.id === string.voice)?.name ?? 'Sound'}`;
+    name.innerHTML = `<i style="--hue:${string.hue}"></i> String ${index + 1} · ${noteName(pitchOf(string))} · ${voices.find(item => item.id === string.voice)?.name ?? 'Sound'}`;
+    name.title = 'Select this string to change its sound';
+    name.classList.toggle('active', string.id === activeStringId);
+    name.addEventListener('click', () => { activeStringId = string.id; refreshNotes(); });
     const remove = document.createElement('button');
     remove.className = 'string-remove';
     remove.textContent = 'Delete';
@@ -371,7 +542,8 @@ function renderStrings() {
       strings.splice(position, 1);
       lastPluck.delete(string.id);
       for (const [handId, gesture] of endpointGestures) if (gesture.string.id === string.id) endpointGestures.delete(handId);
-      renderStrings();
+      if (activeStringId === string.id) activeStringId = strings.at(-1)?.id ?? null;
+      refreshNotes();
       toast('String deleted');
     });
     row.append(name, remove);
@@ -380,10 +552,11 @@ function renderStrings() {
 }
 renderStrings();
 
-type SavedString = Pick<AirString, 'a' | 'b' | 'voice'>;
-type Favorite = { id: string; savedAt: number; selectedVoice: Voice | 'mix'; strings: SavedString[] };
+type SavedString = Pick<AirString, 'a' | 'b' | 'voice' | 'interval'>;
+type Favorite = { id: string; savedAt: number; selectedVoice: Voice | 'mix'; tuningMode?: TuningMode; scaleMode?: ScaleMode; strings: SavedString[] };
 const favoriteKey = 'airloom.favorites.v1';
 const isVoice = (value: unknown): value is Voice => voices.some(item => item.id === value);
+const normalizeVoice = (value: unknown): Voice | null => value === 'silk' ? 'clean' : value === 'starlight' ? 'synth' : isVoice(value) ? value : null;
 const isPoint = (value: unknown): value is Point =>
   !!value && typeof value === 'object' &&
   Number.isFinite((value as Point).x) && Number.isFinite((value as Point).y) &&
@@ -393,12 +566,23 @@ function readFavorites(): Favorite[] {
   try {
     const data: unknown = JSON.parse(localStorage.getItem(favoriteKey) ?? '[]');
     if (!Array.isArray(data)) return [];
-    return data.filter((item): item is Favorite =>
-      !!item && typeof item.id === 'string' && Number.isFinite(item.savedAt) &&
-      (item.selectedVoice === 'mix' || isVoice(item.selectedVoice)) &&
-      Array.isArray(item.strings) && item.strings.length <= 5 &&
-      item.strings.every((string: SavedString) => isPoint(string.a) && isPoint(string.b) && isVoice(string.voice))
-    ).slice(0, 8);
+    const parsed: Favorite[] = [];
+    for (const item of data) {
+      if (!item || typeof item.id !== 'string' || !Number.isFinite(item.savedAt) || !Array.isArray(item.strings) || item.strings.length > 6) continue;
+      const selected = item.selectedVoice === 'mix' ? 'mix' : normalizeVoice(item.selectedVoice);
+      if (!selected) continue;
+      const saved: SavedString[] = [];
+      for (const string of item.strings) {
+        const voice = normalizeVoice(string?.voice);
+        if (!voice || !isPoint(string?.a) || !isPoint(string?.b)) break;
+        saved.push({ a: string.a, b: string.b, voice, interval: Number.isFinite(string.interval) && Math.abs(string.interval) <= 24 ? string.interval : undefined });
+      }
+      if (saved.length !== item.strings.length) continue;
+      parsed.push({ id: item.id, savedAt: item.savedAt, selectedVoice: selected, strings: saved,
+        tuningMode: item.tuningMode === 'tension' ? 'tension' : 'length', scaleMode: item.scaleMode === 'minor' ? 'minor' : 'major' });
+      if (parsed.length === 8) break;
+    }
+    return parsed;
   } catch { return []; }
 }
 let favorites = readFavorites();
@@ -427,10 +611,13 @@ function renderFavorites() {
       strings.length = 0;
       for (const saved of favorite.strings) {
         const item = voices.find(v => v.id === saved.voice)!;
-        strings.push({ id: nextId++, a: { ...saved.a }, b: { ...saved.b }, voice: saved.voice, hue: item.hue, pulse: 0, created: performance.now() });
+        strings.push({ id: nextId++, a: { ...saved.a }, b: { ...saved.b }, voice: saved.voice, hue: item.hue, pulse: 0, interval: saved.interval, created: performance.now() });
       }
-      renderStrings();
+      activeStringId = strings[0]?.id ?? null;
+      setTuning(favorite.tuningMode ?? 'length');
+      setScale(favorite.scaleMode ?? 'major');
       selectSound(favorite.selectedVoice);
+      refreshNotes();
       toast('Favorite loaded');
       stage.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
@@ -453,7 +640,9 @@ get<HTMLButtonElement>('save-favorite').addEventListener('click', () => {
     id: `${Date.now()}-${Math.random()}`,
     savedAt: Date.now(),
     selectedVoice,
-    strings: strings.map(string => ({ a: { ...string.a }, b: { ...string.b }, voice: string.voice })),
+    tuningMode,
+    scaleMode,
+    strings: strings.map(string => ({ a: { ...string.a }, b: { ...string.b }, voice: string.voice, interval: string.interval })),
   });
   favorites = favorites.slice(0, 8);
   if (persistFavorites()) { renderFavorites(); toast('Favorite saved on this device'); }
@@ -474,6 +663,7 @@ function drawString(string: AirString | { a: Point; b: Point; hue: number; pulse
   ctx.save();
   ctx.lineCap = 'round';
   if (dashed) ctx.setLineDash([7, 9]);
+  if ('voice' in string && !dashed) drawVoiceVisual(ctx, string, now, width, height);
   for (const [lineWidth, alpha, blur] of [[15, 0.09, 26], [5, 0.25, 13], [1.8, 0.92, 0]] as const) {
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
@@ -494,6 +684,18 @@ function drawString(string: AirString | { a: Point; b: Point; hue: number; pulse
     ctx.strokeStyle = `hsla(${hue},100%,80%,0.42)`; ctx.lineWidth = 1; ctx.stroke();
     ctx.beginPath(); ctx.arc(p.x, p.y, 4.1, 0, Math.PI * 2);
     ctx.fillStyle = '#fff'; ctx.shadowBlur = 17; ctx.shadowColor = `hsl(${hue},100%,75%)`; ctx.fill();
+  }
+  if ('voice' in string && !dashed) {
+    ctx.font = '600 13px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 3;
+    const labelX = (a.x + b.x) / 2 + nx * 23;
+    const labelY = (a.y + b.y) / 2 + ny * 23;
+    ctx.strokeStyle = 'rgba(4,8,10,.85)';
+    ctx.fillStyle = 'rgba(255,255,255,.88)';
+    const label = noteName(pitchOf(string));
+    ctx.strokeText(label, labelX, labelY);
+    ctx.fillText(label, labelX, labelY);
   }
   ctx.restore();
   string.pulse = Math.max(0, pulse - 0.022);
@@ -533,6 +735,20 @@ function frame(now: number) {
     if (draft && distance(draft.a, draft.b) > 0.04) drawString({ ...draft, hue: previewVoice.hue, pulse: 0 }, now, true);
     if (cameraDraft && distance(cameraDraft.a, cameraDraft.b) > 0.025)
       drawString({ a: cameraDraft.a, b: cameraDraft.b, hue: previewVoice.hue, pulse: 0 }, now, true);
+    if (notePop) {
+      const remaining = 1 - (now - notePop.at) / 850;
+      if (remaining <= 0) notePop = null;
+      else {
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.font = `700 ${20 + (1 - remaining) * 10}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+        ctx.fillStyle = `hsla(${notePop.hue},100%,82%,${remaining})`;
+        ctx.shadowColor = `hsl(${notePop.hue},100%,75%)`;
+        ctx.shadowBlur = 17;
+        ctx.fillText(notePop.text, notePop.x * width, notePop.y * height - 30 - (1 - remaining) * 20);
+        ctx.restore();
+      }
+    }
     if (mode === 'camera') drawHands(now);
   }
   requestAnimationFrame(frame);

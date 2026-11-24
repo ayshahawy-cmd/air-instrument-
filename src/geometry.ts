@@ -1,7 +1,7 @@
 export type Point = { x: number; y: number };
 import type { Voice } from './audio';
 
-export type AirString = { id: number; a: Point; b: Point; voice: Voice; hue: number; pulse: number; created: number };
+export type AirString = { id: number; a: Point; b: Point; voice: Voice; hue: number; pulse: number; created: number; interval?: number };
 
 export const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 export const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
