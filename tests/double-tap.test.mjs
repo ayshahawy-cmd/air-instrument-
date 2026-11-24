@@ -9,8 +9,9 @@ function firstTap(intent, start) {
   intent.update(.8, p(), start + 70);
   intent.update(.2, p(), start + 90);
   intent.update(.2, p(), start + 130);
-  intent.update(.8, p(), start + 150);
-  return intent.update(.8, p(), start + 190);
+  const result = intent.update(.8, p(), start + 150);
+  intent.update(.8, p(), start + 190);
+  return result;
 }
 
 test('a deliberate double tap marks one endpoint', () => {
@@ -18,8 +19,7 @@ test('a deliberate double tap marks one endpoint', () => {
   assert.deepEqual(firstTap(intent, 0), { firstTap: true });
   intent.update(.2, p(.7), 240);
   intent.update(.2, p(.7), 280);
-  intent.update(.8, p(.7), 300);
-  assert.deepEqual(intent.update(.8, p(.7), 340), { doubleTap: p(.7) });
+  assert.deepEqual(intent.update(.8, p(.7), 300), { doubleTap: p(.7) });
 });
 
 test('entering the frame already pinched does not mark a point', () => {
@@ -45,6 +45,14 @@ test('brief noisy contacts are ignored', () => {
   assert.deepEqual(intent.update(.8, p(), 135), {});
   assert.deepEqual(intent.update(.8, p(), 200), {});
   assert.equal(intent.waitingForSecondTap, false);
+});
+
+test('one observed contact frame followed by release can count as a tap', () => {
+  const intent = new DoubleTapIntent();
+  intent.update(.8, p(), 0);
+  intent.update(.8, p(), 80);
+  intent.update(.2, p(), 100);
+  assert.deepEqual(intent.update(.8, p(), 135), { firstTap: true });
 });
 
 test('a held pinch used for tuning does not count as a tap', () => {

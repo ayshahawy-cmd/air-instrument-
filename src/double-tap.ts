@@ -3,12 +3,11 @@ import type { Point } from './geometry.ts';
 export type TapChange = { firstTap?: boolean; doubleTap?: Point };
 
 // A quick thumb-to-index contact followed by separation counts as one tap.
-// Both edges must persist for two camera frames, so single-frame landmark
-// jitter cannot mark a string endpoint.
+// One observed contact frame is enough; the second tap and a minimum interval
+// provide the protection against a single noisy landmark frame.
 export class DoubleTapIntent {
   private openSince: number | null = null;
   private closedSince: number | null = null;
-  private releaseSince: number | null = null;
   private firstTapAt: number | null = null;
   private lastSeen: number | null = null;
   private tapPoint: Point | null = null;
@@ -24,21 +23,19 @@ export class DoubleTapIntent {
 
     if (ratio >= 0.7) {
       if (this.closed) {
-        this.releaseSince ??= now;
-        if (now - this.releaseSince < 35) return {};
         const heldMs = now - (this.closedSince ?? now);
         this.closed = false;
         this.closedSince = null;
-        this.releaseSince = null;
         this.openSince = now;
         const closedPoint = this.tapPoint ?? point;
         this.tapPoint = null;
-        if (heldMs > 280) {
+        if (heldMs < 20 || heldMs > 300) {
           this.firstTapAt = null;
           this.armed = false;
           return {};
         }
         if (this.firstTapAt !== null) {
+          if (now - this.firstTapAt < 85) return {};
           this.firstTapAt = null;
           this.armed = false;
           return { doubleTap: closedPoint };
@@ -52,10 +49,9 @@ export class DoubleTapIntent {
       this.closedSince = null;
     } else if (ratio <= 0.53) {
       this.openSince = null;
-      this.releaseSince = null;
       if (!this.armed) return {};
-      this.closedSince ??= now;
-      if (!this.closed && now - this.closedSince >= 35) {
+      if (!this.closed) {
+        this.closedSince = now;
         this.closed = true;
         this.tapPoint = { ...point };
       }
@@ -69,7 +65,6 @@ export class DoubleTapIntent {
   reset() {
     this.openSince = null;
     this.closedSince = null;
-    this.releaseSince = null;
     this.firstTapAt = null;
     this.lastSeen = null;
     this.tapPoint = null;

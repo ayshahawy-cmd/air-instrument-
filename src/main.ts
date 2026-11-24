@@ -8,6 +8,7 @@ import { Vision, type Hand } from './vision';
 import { PinchIntent } from './pinch';
 import { extendedFingertips } from './fingers';
 import { DoubleTapIntent } from './double-tap';
+import { PinchPoseTracker } from './pinch-pose';
 
 const gestureIntro = new URL('./assets/gesture-intro.jpg', import.meta.url).href;
 const gestureShape = new URL('./assets/gesture-shape.jpg', import.meta.url).href;
@@ -90,6 +91,7 @@ const lastPluck = new Map<number, number>();
 const previousTips = new Map<string, { point: Point; at: number }>();
 const pinchIntents = new Map<string, PinchIntent>();
 const tapIntents = new Map<string, DoubleTapIntent>();
+const pinchPoses = new Map<string, PinchPoseTracker>();
 const handLastSeen = new Map<string, number>();
 const endpointGestures = new Map<string, { string: AirString; end: 'a' | 'b' }>();
 let cameraDraft: { handId: string; a: Point; b: Point; lastTrackedAt: number } | null = null;
@@ -109,6 +111,7 @@ let noteCount = 0;
 let lastToastTimeout = 0;
 let hands: Hand[] = [];
 let cameraRequest = 0;
+let cameraLastResultAt = 0;
 
 const handConnections = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
 
@@ -172,6 +175,7 @@ function clearCameraGestures() {
   endpointGestures.clear();
   pinchIntents.clear();
   tapIntents.clear();
+  pinchPoses.clear();
   handLastSeen.clear();
   previousTips.clear();
 }
@@ -210,7 +214,7 @@ function pointerPoint(event: PointerEvent): Point {
 }
 
 stage.addEventListener('pointerdown', event => {
-  if (mode !== 'mouse' || (event.target as HTMLElement).closest('button')) return;
+  if (mode === 'intro' || (event.target as HTMLElement).closest('button')) return;
   sound.ready().catch(() => toast('Sound could not start. Try tapping the page again.'));
   stage.setPointerCapture(event.pointerId);
   const p = pointerPoint(event);
@@ -220,7 +224,7 @@ stage.addEventListener('pointerdown', event => {
   previousMouse = p;
 });
 stage.addEventListener('pointermove', event => {
-  if (mode !== 'mouse') return;
+  if (mode === 'intro') return;
   const p = pointerPoint(event);
   stage.style.cursor = mouseGesture ? 'grabbing' : nearestEndpoint(p) ? 'grab' : 'crosshair';
   if (mouseGesture?.kind === 'end' && mouseGesture.string && mouseGesture.end) {
@@ -235,7 +239,7 @@ stage.addEventListener('pointermove', event => {
   previousMouse = p;
 });
 function endMouse(event: PointerEvent) {
-  if (mode !== 'mouse' || !mouseGesture) return;
+  if (mode === 'intro' || !mouseGesture) return;
   if (mouseGesture.kind === 'draw' && mouseGesture.start) addString(mouseGesture.start, pointerPoint(event));
   if (mouseGesture.kind === 'end') refreshNotes();
   mouseGesture = null;
@@ -264,7 +268,19 @@ function smoothPoint(from: Point, to: Point): Point {
 
 function updateHands(now: number) {
   const detected = vision.detect(now);
-  if (!detected) return;
+  if (!detected) {
+    if (now - cameraLastResultAt > 500) {
+      hands = [];
+      previousTips.clear();
+      get<HTMLSpanElement>('mode-status').textContent = 'Camera feed paused · check your camera';
+    }
+    if (cameraDraft && now - cameraDraft.lastTrackedAt > 1500) {
+      cameraDraft = null;
+      toast('Hand lost · start the string again with a double-tap');
+    }
+    return;
+  }
+  cameraLastResultAt = now;
   hands = detected.map(hand => {
     const points = hand.points.map(videoPoint);
     return { ...hand, points, tip: videoPoint(hand.tip), pinch: videoPoint(hand.pinch),
@@ -284,8 +300,17 @@ function updateHands(now: number) {
       tapIntent = new DoubleTapIntent();
       tapIntents.set(hand.id, tapIntent);
     }
-    const tap = tapIntent.update(hand.pinchRatio, hand.pinch, now);
-    const change = intent.update(hand.pinchRatio, hand.pinch, now);
+    let poseTracker = pinchPoses.get(hand.id);
+    if (!poseTracker) {
+      poseTracker = new PinchPoseTracker();
+      pinchPoses.set(hand.id, poseTracker);
+    }
+    const pose = poseTracker.update(hand.pinchRatio, hand.openRatio);
+    hand.pose = pose;
+    hand.touching = pose === 'closed';
+    const gestureRatio = pose === 'open' ? 0.8 : pose === 'closed' ? 0.2 : 0.6;
+    const tap = tapIntent.update(gestureRatio, hand.pinch, now);
+    const change = intent.update(gestureRatio, hand.pinch, now);
     hand.pinching = intent.active;
     if (tap.firstTap) {
       endpointGestures.delete(hand.id);
@@ -328,7 +353,7 @@ function updateHands(now: number) {
       cameraDraft.lastTrackedAt = now;
       if (withinStage(hand.pinch)) cameraDraft.b = smoothPoint(cameraDraft.b, hand.pinch);
     }
-    if (!hand.pinching && hand.pinchRatio >= 0.7 && !tapIntent.waitingForSecondTap && !change.released && !change.canceled && !cameraDraft) {
+    if (pose === 'open' && !hand.pinching && !tapIntent.waitingForSecondTap && !change.released && !change.canceled && !cameraDraft) {
       const activeKeys = new Set<string>();
       for (const finger of extendedFingertips(hand.points)) {
         const key = `${hand.id}:${finger.id}`;
@@ -349,6 +374,7 @@ function updateHands(now: number) {
     if (now - (handLastSeen.get(id) ?? 0) < 450) continue;
     pinchIntents.delete(id);
     tapIntents.delete(id);
+    pinchPoses.delete(id);
     handLastSeen.delete(id);
     endpointGestures.delete(id);
   }
@@ -359,20 +385,22 @@ function updateHands(now: number) {
   get<HTMLSpanElement>('mode-status').textContent = cameraDraft
     ? 'First end placed · double-tap at the other end'
     : endpointGestures.size ? 'Shaping · move the endpoint to shorten or stretch'
-    : [...tapIntents.values()].some(item => item.waitingForSecondTap) ? 'Tap once more to mark an endpoint'
-    : hands.length ? 'Hand detected · double-tap to start a string' : 'Show one hand · double-tap to start a string';
+    : [...tapIntents.values()].some(item => item.waitingForSecondTap) ? 'One tap counted · tap once more'
+    : hands.some(item => item.touching) ? 'Fingers together · separate them to complete a tap'
+    : hands.some(item => item.pose === 'open') ? 'Fingers apart · double-tap to start a string'
+    : hands.length ? 'Spread thumb and index to begin' : 'Show one hand · double-tap to start a string';
 }
 
 function setMode(next: 'mouse' | 'camera') {
   mode = next;
-  stage.style.cursor = next === 'mouse' ? 'crosshair' : 'default';
+  stage.style.cursor = 'crosshair';
   stage.classList.toggle('camera-mode', next === 'camera');
   get<HTMLDivElement>('intro').hidden = true;
   get<HTMLDivElement>('controls').hidden = false;
   get<HTMLDivElement>('play-settings').hidden = false;
   get<HTMLSpanElement>('signal-label').textContent = next === 'camera' ? 'CAMERA LIVE' : 'MOUSE MODE';
   get<HTMLSpanElement>('mode-status').textContent = next === 'camera' ? 'Show one hand · double-tap to start a string' : 'Drag to draw · move across a string to play';
-  get<HTMLDivElement>('stage-help').textContent = next === 'camera' ? 'DOUBLE-TAP START  /  MOVE  /  DOUBLE-TAP FINISH' : 'DRAG TO DRAW  /  DRAG AN END TO TUNE';
+  get<HTMLDivElement>('stage-help').textContent = next === 'camera' ? 'DOUBLE-TAP START  /  MOVE  /  DOUBLE-TAP FINISH  ·  MOUSE WORKS TOO' : 'DRAG TO DRAW  /  DRAG AN END TO TUNE';
   get<HTMLButtonElement>('switch-camera').classList.toggle('active', next === 'camera');
   get<HTMLButtonElement>('switch-mouse').classList.toggle('active', next === 'mouse');
 }
@@ -390,6 +418,7 @@ async function startCamera() {
     if (request !== cameraRequest) { vision.stop(); return; }
     if (!vision.video.parentElement) stage.prepend(vision.video);
     hands = [];
+    cameraLastResultAt = performance.now();
     clearCameraGestures();
     setMode('camera');
     toast('Camera ready — double-tap to mark each end of a string');
@@ -745,10 +774,12 @@ function drawHands(now: number) {
       ctx.beginPath(); ctx.arc(point.x * width, point.y * height, 2, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(210,255,235,.78)'; ctx.fill();
     }
-    if (hand.pinchRatio < 0.7) {
-      const p = hand.pinch;
-      ctx.beginPath(); ctx.arc(p.x * width, p.y * height, 14 + Math.sin(now * .012) * 2, 0, Math.PI * 2);
-      ctx.strokeStyle = '#f5f9f4'; ctx.lineWidth = 2; ctx.shadowBlur = 20; ctx.shadowColor = ctx.strokeStyle; ctx.stroke();
+    if (hand.touching) {
+      for (const index of [4, 8]) {
+        const p = hand.points[index];
+        ctx.beginPath(); ctx.arc(p.x * width, p.y * height, 5 + Math.sin(now * .012), 0, Math.PI * 2);
+        ctx.fillStyle = '#e9f9b6'; ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle; ctx.fill();
+      }
     } else for (const finger of extendedFingertips(hand.points)) {
       const p = finger.point;
       ctx.beginPath(); ctx.arc(p.x * width, p.y * height, finger.id === 'index' ? 9 : 6.5, 0, Math.PI * 2);
