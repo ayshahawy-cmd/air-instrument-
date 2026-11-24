@@ -20,14 +20,14 @@ The reference demo is a single HTML page containing its CSS, markup, and JavaScr
 
 Airloom uses Vite and TypeScript, MediaPipe Hand Landmarker, Canvas 2D, and Web Audio. It now shows note names on the strings and the active note in the stage, offers seven individually synthesized sounds and distinct graphics, major/minor pentatonic snapping, length/tension modes, optional 1/3/6 chord presets, and full-screen play. Pitch labels and sound share `midiForLength` so they cannot disagree about the current note. Presets and favorites also save each string's sound and tuning state.
 
-Airloom deliberately starts and resets with an **empty canvas**, matching the owner's request. Its default remains **length mode** (shorter means higher), and one hand can draw a string by pinching, moving, and releasing. The reference starts with a string and defaults to tension mode. Optional chord buttons create presets only when clicked. Airloom also keeps Undo and per-string Delete visible, instead of relying on a throw gesture.
+Airloom deliberately starts and resets with an **empty canvas**, matching the owner's request. Its default remains **length mode** (shorter means higher). The owner later chose a double-tap gesture: two thumb-to-index taps mark the first endpoint, and another two mark the second. This is intentionally different from the reference's pinch-and-pull drawing. All five extended fingertips can pluck independently. The reference starts with a string and defaults to tension mode. Optional chord buttons create presets only when clicked. Airloom also keeps Undo and per-string Delete visible, instead of relying on a throw gesture.
 
 The audio and visual implementations are different. Airloom generates and caches short Web Audio buffers for plucks, then adjusts playback rate while a note rings. The reference runs a continuous feedback string model in an AudioWorklet. Airloom uses Canvas 2D effects; the reference uses WebGL shaders. These differences can be heard or seen during long bends and on slower devices. Replacing the buffer model with an AudioWorklet and profiling camera-to-audio latency are the next steps if closer physical behavior is needed. We did not copy the reference's source or shader code into Airloom.
 
 ## Verification targets
 
 1. Starting camera, switching to mouse, and clearing must leave zero strings until the player draws or explicitly selects a preset.
-2. One open hand followed by a held pinch and movement should create exactly one string on release; appearing already pinched or briefly losing tracking should not.
+2. An open hand followed by two stable taps should mark the first endpoint; a second double-tap should finish exactly one string. A single tap, a hand appearing already pinched, and a brief tracking gap should not create a stray string.
 3. Moving an endpoint should update both the displayed note and the next played pitch. Length and tension modes should change in opposite directions.
 4. Each sound should be selectable. Existing strings should keep their sound unless explicitly selected and changed. Favorites should restore sounds, scale, tuning, endpoints, and chord intervals.
 5. Full-screen play should expose the stage, controls, and sounds, and allow a clear exit path.

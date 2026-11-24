@@ -8,7 +8,7 @@ export type PinchChange = {
 };
 
 // A hand must first be visibly open, then briefly hold a pinch. Tracking loss
-// and large landmark jumps cancel the gesture instead of creating a string.
+// and large landmark jumps cancel an endpoint move.
 export class PinchIntent {
   private openSince: number | null = null;
   private closeSince: number | null = null;
@@ -27,7 +27,7 @@ export class PinchIntent {
     this.lastSeen = now;
 
     if (this.active) {
-      if (ratio >= 0.62) {
+      if (ratio >= 0.7) {
         this.releaseSince ??= now;
         if (now - this.releaseSince >= 75) {
           const released = this.lastPoint ?? point;
@@ -47,11 +47,11 @@ export class PinchIntent {
       return { moved: point };
     }
 
-    if (ratio >= 0.62) {
+    if (ratio >= 0.7) {
       this.openSince ??= now;
       if (now - this.openSince >= 80) this.ready = true;
       this.closeSince = null;
-    } else if (ratio <= 0.42 && this.ready) {
+    } else if (ratio <= 0.53 && this.ready) {
       this.closeSince ??= now;
       if (now - this.closeSince >= 80) {
         this.active = true;

@@ -6,6 +6,8 @@ import { midiForLength, noteName, type ScaleMode, type TuningMode } from './pitc
 import { drawVoiceVisual } from './visuals';
 import { Vision, type Hand } from './vision';
 import { PinchIntent } from './pinch';
+import { extendedFingertips } from './fingers';
+import { DoubleTapIntent } from './double-tap';
 
 const gestureIntro = new URL('./assets/gesture-intro.jpg', import.meta.url).href;
 const gestureShape = new URL('./assets/gesture-shape.jpg', import.meta.url).href;
@@ -36,7 +38,7 @@ app.innerHTML = `
             <div class="intro-symbol"><img src="${gestureIntro}" alt="" /></div>
             <div class="intro-kicker">YOUR AIR. YOUR INSTRUMENT.</div>
             <h2>Ready to play?</h2>
-            <p>Pinch thumb and index finger, move your hand, then release.<br class="desktop-break" /> Or pinch with both hands and pull apart. Mouse works too.</p>
+            <p>Double-tap thumb and index to mark one end. Move your hand,<br class="desktop-break" /> then double-tap again to finish. Or play with a mouse.</p>
             <div class="intro-actions"><button id="start-camera" class="button button-primary">✺ &nbsp; Start camera</button><button id="start-mouse" class="button button-secondary">Try with mouse <span>→</span></button></div>
             <small>Camera stays on your device. No account needed.</small>
           </div>
@@ -68,9 +70,9 @@ app.innerHTML = `
       <section class="soundbar" aria-label="Choose a sound"><div class="soundbar-label">SOUND FOR NEW STRINGS <span>↘</span></div><div class="sound-options" id="sound-options"></div></section>
       <section class="favorites" id="favorites" hidden><div class="favorites-heading"><strong>YOUR FAVORITES</strong><span>Saved in this browser</span></div><div class="favorites-list" id="favorites-list"></div></section>
       <section class="how" id="how"><h2>Get going with Airloom</h2><p class="how-lead">A little movement is all it takes. Make a string, shape its sound, and see where the music goes.</p><div class="how-grid">
-        <article><div class="step-copy"><div class="step-num">01 / MAKE</div><h3>Draw a string.</h3><p>Pinch your thumb and index finger, move your hand, then release. With a mouse, click and drag.</p></div><div class="step-art art-draw"><img src="${gestureIntro}" alt="A hand pinching a glowing turquoise string" loading="lazy" /></div></article>
+        <article><div class="step-copy"><div class="step-num">01 / MAKE</div><h3>Draw a string.</h3><p>Double-tap thumb and index to place the first end. Move your hand, then double-tap again to finish. With a mouse, click and drag.</p></div><div class="step-art art-draw"><img src="${gestureIntro}" alt="A hand pinching a glowing turquoise string" loading="lazy" /></div></article>
         <article><div class="step-copy"><div class="step-num">02 / SHAPE</div><h3>Give it a note.</h3><p>Pinch or drag either end to tune the string. Shorter strings make brighter, higher notes.</p></div><div class="step-art art-shape"><img src="${gestureShape}" alt="A hand moving a glowing lavender string endpoint" loading="lazy" /></div></article>
-        <article><div class="step-copy"><div class="step-num">03 / PLAY</div><h3>Let it sing.</h3><p>Swipe an index finger across a string to pluck it. Faster gestures make louder notes.</p></div><div class="step-art art-play"><img src="${gesturePlay}" alt="An index finger plucking a glowing string" loading="lazy" /></div></article>
+        <article><div class="step-copy"><div class="step-num">03 / PLAY</div><h3>Let it sing.</h3><p>Swipe any fingertip across a string. Play several strings with different fingers to sound a chord.</p></div><div class="step-art art-play"><img src="${gesturePlay}" alt="An index finger plucking a glowing string" loading="lazy" /></div></article>
       </div></section>
       <section class="about" id="about"><div class="about-orb">✳</div><div><h2>Made to be played.<br />Made to be shared.</h2><p>Airloom uses on-device hand tracking and browser audio to turn everyday movements into a playful instrument. Camera frames stay in your browser. The code is open for anyone to explore and remix.</p><a href="https://github.com/ayshahawy-cmd/air-instrument-" target="_blank" rel="noreferrer">Explore on GitHub ↗</a></div></section>
     </main>
@@ -85,11 +87,12 @@ const vision = new Vision();
 const sound = new SoundEngine();
 const strings: AirString[] = [];
 const lastPluck = new Map<number, number>();
-const previousTips = new Map<string, Point>();
+const previousTips = new Map<string, { point: Point; at: number }>();
 const pinchIntents = new Map<string, PinchIntent>();
+const tapIntents = new Map<string, DoubleTapIntent>();
 const handLastSeen = new Map<string, number>();
 const endpointGestures = new Map<string, { string: AirString; end: 'a' | 'b' }>();
-let cameraDraft: { handId: string; partnerId?: string; a: Point; b: Point } | null = null;
+let cameraDraft: { handId: string; a: Point; b: Point; lastTrackedAt: number } | null = null;
 let draft: { a: Point; b: Point } | null = null;
 let mouseGesture: { kind: 'draw' | 'end'; start?: Point; string?: AirString; end?: 'a' | 'b' } | null = null;
 let previousMouse: Point | null = null;
@@ -168,6 +171,7 @@ function clearCameraGestures() {
   cameraDraft = null;
   endpointGestures.clear();
   pinchIntents.clear();
+  tapIntents.clear();
   handLastSeen.clear();
   previousTips.clear();
 }
@@ -181,11 +185,11 @@ function nearestEndpoint(p: Point) {
   return found;
 }
 
-function pluck(from: Point, to: Point, now: number) {
+function pluck(from: Point, to: Point, now: number, minimumSpeed?: number) {
   const speed = distance(from, to);
-  if (speed < (mode === 'camera' ? 0.03 : 0.018) || speed > (mode === 'camera' ? 0.18 : 0.28)) return;
+  if (speed < (minimumSpeed ?? (mode === 'camera' ? 0.012 : 0.018)) || speed > (mode === 'camera' ? 0.2 : 0.28)) return;
   for (const string of strings) {
-    if (now - (lastPluck.get(string.id) ?? 0) < (mode === 'camera' ? 320 : 115)) continue;
+    if (now - (lastPluck.get(string.id) ?? 0) < (mode === 'camera' ? 115 : 115)) continue;
     const hit = crossing(from, to, string.a, string.b);
     if (!hit) continue;
     lastPluck.set(string.id, now);
@@ -261,7 +265,11 @@ function smoothPoint(from: Point, to: Point): Point {
 function updateHands(now: number) {
   const detected = vision.detect(now);
   if (!detected) return;
-  hands = detected.map(hand => ({ ...hand, points: hand.points.map(videoPoint), tip: videoPoint(hand.tip), pinch: videoPoint(hand.pinch) }));
+  hands = detected.map(hand => {
+    const points = hand.points.map(videoPoint);
+    return { ...hand, points, tip: videoPoint(hand.tip), pinch: videoPoint(hand.pinch),
+      palmSpan: Math.max(distance(points[0], points[9]), distance(points[5], points[17]) * 1.1) };
+  });
   const seen = new Set<string>();
   for (const hand of hands) {
     seen.add(hand.id);
@@ -271,21 +279,25 @@ function updateHands(now: number) {
       intent = new PinchIntent();
       pinchIntents.set(hand.id, intent);
     }
+    let tapIntent = tapIntents.get(hand.id);
+    if (!tapIntent) {
+      tapIntent = new DoubleTapIntent();
+      tapIntents.set(hand.id, tapIntent);
+    }
+    const tap = tapIntent.update(hand.pinchRatio, hand.pinch, now);
     const change = intent.update(hand.pinchRatio, hand.pinch, now);
     hand.pinching = intent.active;
+    if (tap.firstTap) {
+      endpointGestures.delete(hand.id);
+      intent.reset();
+      hand.pinching = false;
+    }
     if (change.canceled) {
       endpointGestures.delete(hand.id);
-      if (cameraDraft?.handId === hand.id || cameraDraft?.partnerId === hand.id) cameraDraft = null;
     }
     if (change.started) {
-      const endpoint = nearestEndpoint(change.started);
+      const endpoint = cameraDraft ? null : nearestEndpoint(change.started);
       if (endpoint) endpointGestures.set(hand.id, { string: endpoint.string, end: endpoint.end });
-      else if (withinStage(change.started)) {
-        if (cameraDraft && cameraDraft.handId !== hand.id && !cameraDraft.partnerId) {
-          cameraDraft.partnerId = hand.id;
-          cameraDraft.b = { ...change.started };
-        } else if (!cameraDraft) cameraDraft = { handId: hand.id, a: { ...change.started }, b: { ...change.started } };
-      }
     }
     if (change.moved) {
       const endpoint = endpointGestures.get(hand.id);
@@ -295,41 +307,60 @@ function updateHands(now: number) {
         sound.retune(endpoint.string.id, pitchOf(endpoint.string));
         get<HTMLDivElement>('active-note').textContent = `${noteName(pitchOf(endpoint.string))} · ${voices.find(voice => voice.id === endpoint.string.voice)?.name}`;
       }
-      else if (cameraDraft && withinStage(change.moved)) {
-        if (cameraDraft.partnerId === hand.id) cameraDraft.b = smoothPoint(cameraDraft.b, change.moved);
-        else if (cameraDraft.handId === hand.id) {
-          if (cameraDraft.partnerId) cameraDraft.a = smoothPoint(cameraDraft.a, change.moved);
-          else cameraDraft.b = smoothPoint(cameraDraft.b, change.moved);
-        }
-      }
     }
     if (change.released) {
-      if (cameraDraft?.handId === hand.id || cameraDraft?.partnerId === hand.id) {
-        const { a, b } = cameraDraft;
-        cameraDraft = null;
-        addString(a, b);
-      }
       if (endpointGestures.has(hand.id)) refreshNotes();
       endpointGestures.delete(hand.id);
     }
-    if (!hand.pinching && !change.released && !change.canceled) {
-      const previous = previousTips.get(hand.id);
-      if (previous) pluck(previous, hand.tip, now);
-      previousTips.set(hand.id, hand.tip);
-    } else previousTips.delete(hand.id);
+    if (tap.doubleTap && withinStage(tap.doubleTap)) {
+      endpointGestures.delete(hand.id);
+      intent.reset();
+      if (!cameraDraft) {
+        cameraDraft = { handId: hand.id, a: { ...tap.doubleTap }, b: { ...tap.doubleTap }, lastTrackedAt: now };
+        toast('First end placed · move your hand, then double-tap again');
+      } else if (distance(cameraDraft.a, tap.doubleTap) >= 0.075) {
+        const start = cameraDraft.a;
+        cameraDraft = null;
+        addString(start, tap.doubleTap);
+      } else toast('Move farther from the first end, then double-tap again');
+    }
+    if (cameraDraft?.handId === hand.id) {
+      cameraDraft.lastTrackedAt = now;
+      if (withinStage(hand.pinch)) cameraDraft.b = smoothPoint(cameraDraft.b, hand.pinch);
+    }
+    if (!hand.pinching && hand.pinchRatio >= 0.7 && !tapIntent.waitingForSecondTap && !change.released && !change.canceled && !cameraDraft) {
+      const activeKeys = new Set<string>();
+      for (const finger of extendedFingertips(hand.points)) {
+        const key = `${hand.id}:${finger.id}`;
+        activeKeys.add(key);
+        const previous = previousTips.get(key);
+        const step = previous ? distance(previous.point, finger.point) : 0;
+        const maxStep = Math.max(0.055, hand.palmSpan * 0.9);
+        if (previous && now - previous.at < 180 && step <= maxStep) {
+          pluck(previous.point, finger.point, now, Math.max(0.007, hand.palmSpan * 0.055));
+        }
+        previousTips.set(key, { point: finger.point, at: now });
+      }
+      for (const key of previousTips.keys()) if (key.startsWith(`${hand.id}:`) && !activeKeys.has(key)) previousTips.delete(key);
+    } else for (const key of previousTips.keys()) if (key.startsWith(`${hand.id}:`)) previousTips.delete(key);
   }
   for (const id of pinchIntents.keys()) if (!seen.has(id)) {
-    previousTips.delete(id);
-    if (now - (handLastSeen.get(id) ?? 0) < 180) continue;
+    for (const key of previousTips.keys()) if (key.startsWith(`${id}:`)) previousTips.delete(key);
+    if (now - (handLastSeen.get(id) ?? 0) < 450) continue;
     pinchIntents.delete(id);
+    tapIntents.delete(id);
     handLastSeen.delete(id);
     endpointGestures.delete(id);
-    if (cameraDraft?.handId === id || cameraDraft?.partnerId === id) cameraDraft = null;
+  }
+  if (cameraDraft && now - cameraDraft.lastTrackedAt > 1500) {
+    cameraDraft = null;
+    toast('Hand lost · start the string again with a double-tap');
   }
   get<HTMLSpanElement>('mode-status').textContent = cameraDraft
-    ? cameraDraft.partnerId ? 'Drawing · pull both hands apart, then release' : 'Drawing · move your pinched hand, then release'
+    ? 'First end placed · double-tap at the other end'
     : endpointGestures.size ? 'Shaping · move the endpoint to shorten or stretch'
-    : hands.length ? 'Hand detected · pinch, move, and release to draw' : 'Show one hand · open, then pinch to draw';
+    : [...tapIntents.values()].some(item => item.waitingForSecondTap) ? 'Tap once more to mark an endpoint'
+    : hands.length ? 'Hand detected · double-tap to start a string' : 'Show one hand · double-tap to start a string';
 }
 
 function setMode(next: 'mouse' | 'camera') {
@@ -340,8 +371,8 @@ function setMode(next: 'mouse' | 'camera') {
   get<HTMLDivElement>('controls').hidden = false;
   get<HTMLDivElement>('play-settings').hidden = false;
   get<HTMLSpanElement>('signal-label').textContent = next === 'camera' ? 'CAMERA LIVE' : 'MOUSE MODE';
-  get<HTMLSpanElement>('mode-status').textContent = next === 'camera' ? 'Show one hand · open, then pinch to draw' : 'Drag to draw · move across a string to play';
-  get<HTMLDivElement>('stage-help').textContent = next === 'camera' ? 'PINCH + MOVE + RELEASE TO DRAW  /  PINCH AN END TO SHORTEN' : 'DRAG TO DRAW  /  DRAG AN END TO TUNE';
+  get<HTMLSpanElement>('mode-status').textContent = next === 'camera' ? 'Show one hand · double-tap to start a string' : 'Drag to draw · move across a string to play';
+  get<HTMLDivElement>('stage-help').textContent = next === 'camera' ? 'DOUBLE-TAP START  /  MOVE  /  DOUBLE-TAP FINISH' : 'DRAG TO DRAW  /  DRAG AN END TO TUNE';
   get<HTMLButtonElement>('switch-camera').classList.toggle('active', next === 'camera');
   get<HTMLButtonElement>('switch-mouse').classList.toggle('active', next === 'mouse');
 }
@@ -361,7 +392,7 @@ async function startCamera() {
     hands = [];
     clearCameraGestures();
     setMode('camera');
-    toast('Camera ready — open one hand, pinch, move, then release');
+    toast('Camera ready — double-tap to mark each end of a string');
   } catch (error) {
     if (request !== cameraRequest) return;
     const message = error instanceof Error ? error.message : 'Camera could not start.';
@@ -714,9 +745,15 @@ function drawHands(now: number) {
       ctx.beginPath(); ctx.arc(point.x * width, point.y * height, 2, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(210,255,235,.78)'; ctx.fill();
     }
-    const p = hand.pinching ? hand.pinch : hand.tip;
-    ctx.beginPath(); ctx.arc(p.x * width, p.y * height, hand.pinching ? 18 + Math.sin(now * .012) * 2 : 11, 0, Math.PI * 2);
-    ctx.strokeStyle = hand.pinching ? '#f5f9f4' : '#a9fff0'; ctx.lineWidth = 2; ctx.shadowBlur = 20; ctx.shadowColor = ctx.strokeStyle; ctx.stroke();
+    if (hand.pinchRatio < 0.7) {
+      const p = hand.pinch;
+      ctx.beginPath(); ctx.arc(p.x * width, p.y * height, 14 + Math.sin(now * .012) * 2, 0, Math.PI * 2);
+      ctx.strokeStyle = '#f5f9f4'; ctx.lineWidth = 2; ctx.shadowBlur = 20; ctx.shadowColor = ctx.strokeStyle; ctx.stroke();
+    } else for (const finger of extendedFingertips(hand.points)) {
+      const p = finger.point;
+      ctx.beginPath(); ctx.arc(p.x * width, p.y * height, finger.id === 'index' ? 9 : 6.5, 0, Math.PI * 2);
+      ctx.strokeStyle = '#a9fff0'; ctx.lineWidth = 1.5; ctx.shadowBlur = 12; ctx.shadowColor = ctx.strokeStyle; ctx.stroke();
+    }
     ctx.restore();
   }
 }
